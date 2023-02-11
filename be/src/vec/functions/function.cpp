@@ -202,6 +202,7 @@ Status PreparedFunctionImpl::default_implementation_for_constant_arguments(
 Status PreparedFunctionImpl::default_implementation_for_nulls(
         FunctionContext* context, Block& block, const ColumnNumbers& args, size_t result,
         size_t input_rows_count, bool dry_run, bool* executed) {
+//    struct timespec startT, endT;
     *executed = false;
     if (args.empty() || !use_default_implementation_for_nulls()) {
         return Status::OK();
@@ -217,13 +218,16 @@ Status PreparedFunctionImpl::default_implementation_for_nulls(
     }
 
     if (null_presence.has_nullable) {
-        auto [temporary_block, new_args, new_result] =
-                create_block_with_nested_columns(block, args, result);
+        Block temporary_block = create_block_with_nested_columns(block, args, result); // 1000 ns
         RETURN_IF_ERROR(execute_without_low_cardinality_columns(
-                context, temporary_block, new_args, new_result, temporary_block.rows(), dry_run));
+                context, temporary_block, args, result, temporary_block.rows(), dry_run));
+//        clock_gettime(CLOCK_MONOTONIC, &startT);
         block.get_by_position(result).column =
-                wrap_in_nullable(temporary_block.get_by_position(new_result).column, block, args,
+                wrap_in_nullable(temporary_block.get_by_position(result).column, block, args, // 600 ns
                                  result, input_rows_count);
+//        clock_gettime(CLOCK_MONOTONIC, &endT);
+//        fprintf(stderr, "==> execute_impl %lu ns\n",
+//                (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         *executed = true;
         return Status::OK();
     }
@@ -245,11 +249,12 @@ Status PreparedFunctionImpl::execute_without_low_cardinality_columns(
     if (executed) {
         return Status::OK();
     }
-
+    Status status;
     if (dry_run)
-        return execute_impl_dry_run(context, block, args, result, input_rows_count);
+        status = execute_impl_dry_run(context, block, args, result, input_rows_count);
     else
-        return execute_impl(context, block, args, result, input_rows_count);
+        status = execute_impl(context, block, args, result, input_rows_count);
+    return status;
 }
 
 Status PreparedFunctionImpl::execute(FunctionContext* context, Block& block,
@@ -270,8 +275,14 @@ Status PreparedFunctionImpl::execute(FunctionContext* context, Block& block,
     //            res.column = block_without_low_cardinality.safe_get_by_position(result).column;
     //        }
     //    } else
-    return execute_without_low_cardinality_columns(context, block, args, result, input_rows_count,
+//    struct timespec startT, endT;
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
+    Status status = execute_without_low_cardinality_columns(context, block, args, result, input_rows_count,
                                                    dry_run);
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> PreparedFunctionImpl(%s)::execute %lu ns\n", get_name().c_str(),
+//            (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    return status;
 }
 
 void FunctionBuilderImpl::check_number_of_arguments(size_t number_of_arguments) const {
@@ -296,9 +307,10 @@ DataTypePtr FunctionBuilderImpl::get_return_type_without_low_cardinality(
         }
         if (null_presence.has_nullable) {
             ColumnNumbers numbers(arguments.size());
-            std::iota(numbers.begin(), numbers.end(), 0);
-            auto [nested_block, _] =
-                    create_block_with_nested_columns(Block(arguments), numbers, false);
+            for (size_t i = 0; i < arguments.size(); i++) {
+                numbers[i] = i;
+            }
+            Block nested_block = create_block_with_nested_columns(Block(arguments), numbers);
             auto return_type = get_return_type_impl(
                     ColumnsWithTypeAndName(nested_block.begin(), nested_block.end()));
             return make_nullable(return_type);

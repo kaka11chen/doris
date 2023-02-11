@@ -40,8 +40,12 @@ VExprContext::~VExprContext() {
 }
 
 doris::Status VExprContext::execute(doris::vectorized::Block* block, int* result_column_id) {
+//    struct timespec startT, endT;
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
     Status st = _root->execute(this, block, result_column_id);
     _last_result_column_id = *result_column_id;
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> VExprContext::execute %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     return st;
 }
 

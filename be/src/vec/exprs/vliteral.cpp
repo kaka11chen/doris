@@ -186,8 +186,13 @@ void VLiteral::init(const TExprNode& node) {
 
 Status VLiteral::execute(VExprContext* context, vectorized::Block* block, int* result_column_id) {
     // Literal expr should return least one row.
+//    struct timespec startT, endT;
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
     size_t row_size = std::max(block->rows(), _column_ptr->size());
     *result_column_id = VExpr::insert_param(block, {_column_ptr, _data_type, _expr_name}, row_size);
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> VLiteral::execute %lu ns\n", expr_name().c_str(),
+//            (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     return Status::OK();
 }
 

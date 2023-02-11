@@ -23,6 +23,7 @@
 #include <cassert>
 #include <cstring>
 
+#include "gutil/strings/fastmem.h"
 #include "vec/columns/column.h"
 #include "vec/columns/column_impl.h"
 #include "vec/common/assert_cast.h"
@@ -279,6 +280,64 @@ public:
         }
     }
 
+    template <typename T, size_t copy_length>
+    void insert_many_strings_fixed_length(const StringRef* strings, size_t num) __attribute__((noinline));
+
+    template <size_t copy_length>
+    void insert_many_strings_fixed_length(const StringRef* strings, size_t num) {
+//        size_t new_size = 0;
+//        for (size_t i = 0; i < num; ++i) {
+//            new_size += strings[i].size;
+//        }
+//
+//        size_t offset = chars_p->size();
+//        chars_p->resize(new_size + copy_length);
+//        for (size_t i = 0; i < num; ++i) {
+//            strings::memcpy_inlined(&(*chars_p)[offset], strings[i].data, copy_length);
+//            offsets_p->emplace_back(offset);
+//            offset += strings[i].size;
+//        }
+//        chars_p->resize(offset);
+
+        size_t new_size = 0;
+        for (size_t i = 0; i < num; i++) {
+            new_size += strings[i].size;
+        }
+
+        const size_t old_size = chars.size();
+        check_chars_length(old_size + new_size);
+        chars.resize(old_size + new_size + copy_length);
+
+        Char* data = chars.data();
+        size_t offset = old_size;
+        for (size_t i = 0; i < num; i++) {
+            uint32_t len = strings[i].size;
+            if (len) {
+                memcpy(data + offset, strings[i].data, copy_length);
+                offset += len;
+            }
+            offsets.push_back(offset);
+        }
+        chars.resize(old_size + new_size);
+    }
+
+    void insert_many_strings_overflow(const StringRef* strings, size_t num, size_t max_length) override {
+        if (max_length <= 8) {
+            insert_many_strings_fixed_length<8>(strings, num);
+        } else if (max_length <= 16) {
+            insert_many_strings_fixed_length<16>(strings, num);
+        } else if (max_length <= 32) {
+            insert_many_strings_fixed_length<32>(strings, num);
+        } else if (max_length <= 64) {
+            insert_many_strings_fixed_length<64>(strings, num);
+        } else if (max_length <= 128) {
+            insert_many_strings_fixed_length<128>(strings, num);
+        } else {
+            insert_many_strings(strings, num);
+        }
+//        insert_many_strings(strings, num);
+    }
+
     void insert_many_dict_data(const int32_t* data_array, size_t start_index, const StringRef* dict,
                                size_t num, uint32_t /*dict_num*/) override {
         size_t offset_size = offsets.size();
@@ -372,6 +431,8 @@ public:
                              const int* indices_end) override;
 
     ColumnPtr filter(const Filter& filt, ssize_t result_size_hint) const override;
+
+    virtual size_t filter_range(const IColumn::Filter& filter, size_t from, size_t to) override;
 
     ColumnPtr permute(const Permutation& perm, size_t limit) const override;
 
@@ -474,3 +535,4 @@ public:
 };
 
 } // namespace doris::vectorized
+

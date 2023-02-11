@@ -261,6 +261,10 @@ public:
         LOG(FATAL) << "Method insert_many_binary_data is not supported for " << get_name();
     }
 
+    virtual void insert_many_strings_overflow(const StringRef* strings, size_t num, size_t max_length) {
+        LOG(FATAL) << "Method insert_many_strings_overflow is not supported for " << get_name();
+    }
+
     // Here `pos` points to the memory data type is the same as the data type of the column.
     // This function is used by `insert_keys_into_columns` in AggregationNode.
     virtual void insert_many_raw_data(const char* pos, size_t num) {
@@ -376,6 +380,11 @@ public:
       */
     using Filter = PaddedPODArray<UInt8>;
     virtual Ptr filter(const Filter& filt, ssize_t result_size_hint) const = 0;
+
+    virtual size_t filter_range(const IColumn::Filter& filter, size_t from, size_t to) {
+        LOG(FATAL) << "filter_range not supported";
+        __builtin_unreachable();
+    }
 
     /**
      *  used by lazy materialization to filter column by selected rowids
@@ -707,3 +716,4 @@ struct ColumnPtrWrapper {
     ColumnPtrWrapper(vectorized::ColumnPtr col) : column_ptr(col) {};
 };
 } // namespace doris
+

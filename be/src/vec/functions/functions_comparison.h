@@ -80,8 +80,10 @@ struct NumComparisonImpl {
         }
     }
 
-    static void NO_INLINE vector_constant(const PaddedPODArray<A>& a, B b,
+    static void NO_INLINE  vector_constant(const PaddedPODArray<A>& a, B b,
                                           PaddedPODArray<UInt8>& c) {
+        //struct timespec startT, endT;
+        //clock_gettime(CLOCK_MONOTONIC, &startT);
         size_t size = a.size();
         const A* a_pos = a.data();
         UInt8* c_pos = c.data();
@@ -92,6 +94,8 @@ struct NumComparisonImpl {
             ++a_pos;
             ++c_pos;
         }
+        //clock_gettime(CLOCK_MONOTONIC, &endT);
+        //fprintf(stderr, "==> vector_constant %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     }
 
     static void constant_vector(A a, const PaddedPODArray<B>& b, PaddedPODArray<UInt8>& c) {
@@ -218,14 +222,14 @@ private:
                                const IColumn* col_right_untyped) {
         if (const ColumnVector<T0>* col_left =
                     check_and_get_column<ColumnVector<T0>>(col_left_untyped)) {
-            if (execute_num_right_type<T0, UInt8>(block, result, col_left, col_right_untyped) ||
+            if (execute_num_right_type<T0, Int64>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, UInt16>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, UInt32>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, UInt64>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, Int8>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, Int16>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, Int32>(block, result, col_left, col_right_untyped) ||
-                execute_num_right_type<T0, Int64>(block, result, col_left, col_right_untyped) ||
+                execute_num_right_type<T0, UInt8>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, Int128>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, Float32>(block, result, col_left, col_right_untyped) ||
                 execute_num_right_type<T0, Float64>(block, result, col_left, col_right_untyped))
@@ -237,7 +241,7 @@ private:
 
         } else if (auto col_left_const =
                            check_and_get_column_const<ColumnVector<T0>>(col_left_untyped)) {
-            if (execute_num_const_right_type<T0, UInt8>(block, result, col_left_const,
+            if (execute_num_const_right_type<T0, Int64>(block, result, col_left_const,
                                                         col_right_untyped) ||
                 execute_num_const_right_type<T0, UInt16>(block, result, col_left_const,
                                                          col_right_untyped) ||
@@ -251,7 +255,7 @@ private:
                                                         col_right_untyped) ||
                 execute_num_const_right_type<T0, Int32>(block, result, col_left_const,
                                                         col_right_untyped) ||
-                execute_num_const_right_type<T0, Int64>(block, result, col_left_const,
+                execute_num_const_right_type<T0, UInt8>(block, result, col_left_const,
                                                         col_right_untyped) ||
                 execute_num_const_right_type<T0, Int128>(block, result, col_left_const,
                                                          col_right_untyped) ||
@@ -335,6 +339,8 @@ public:
 
     Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) override {
+//        struct timespec startT, endT;
+//        clock_gettime(CLOCK_MONOTONIC, &startT);
         const auto& col_with_type_and_name_left = block.get_by_position(arguments[0]);
         const auto& col_with_type_and_name_right = block.get_by_position(arguments[1]);
         const IColumn* col_left_untyped = col_with_type_and_name_left.column.get();
@@ -379,7 +385,7 @@ public:
         //                                 which_right.is_date_or_datetime();
 
         if (left_is_num && right_is_num) {
-            if (!(execute_num_left_type<UInt8>(block, result, col_left_untyped,
+            if (!(execute_num_left_type<Int64>(block, result, col_left_untyped,
                                                col_right_untyped) ||
                   execute_num_left_type<UInt16>(block, result, col_left_untyped,
                                                 col_right_untyped) ||
@@ -392,7 +398,7 @@ public:
                                                col_right_untyped) ||
                   execute_num_left_type<Int32>(block, result, col_left_untyped,
                                                col_right_untyped) ||
-                  execute_num_left_type<Int64>(block, result, col_left_untyped,
+                  execute_num_left_type<UInt8>(block, result, col_left_untyped,
                                                col_right_untyped) ||
                   execute_num_left_type<Int128>(block, result, col_left_untyped,
                                                 col_right_untyped) ||
@@ -422,8 +428,11 @@ public:
             return execute_generic(block, result, col_with_type_and_name_left,
                                    col_with_type_and_name_right);
         }
+//	clock_gettime(CLOCK_MONOTONIC, &endT);
+//        fprintf(stderr, "==> execute_impl %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         return Status::OK();
     }
 };
 
 } // namespace doris::vectorized
+

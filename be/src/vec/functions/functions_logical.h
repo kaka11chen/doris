@@ -41,9 +41,29 @@ namespace FunctionsLogicalDetail {
 namespace Ternary {
 using ResultType = UInt8;
 
-static constexpr UInt8 False = 0;
-static constexpr UInt8 True = -1;
-static constexpr UInt8 Null = 1;
+/** These values are carefully picked so that they could be efficiently evaluated with bitwise operations, which
+      * are feasible for auto-vectorization by the compiler. The expression for the ternary value evaluation writes:
+      *
+      * ternary_value = ((value << 1) | is_null) & (1 << !is_null)
+      *
+      * The truth table of the above formula lists:
+      *  +---------------+--------------+-------------+
+      *  | is_null\value |      0       |      1      |
+      *  +---------------+--------------+-------------+
+      *  |             0 | 0b00 (False) | 0b10 (True) |
+      *  |             1 | 0b01 (Null)  | 0b01 (Null) |
+      *  +---------------+--------------+-------------+
+      *
+      * As the numerical values of False, Null and True are assigned in ascending order, the "and" and "or" of
+      * ternary logic could be implemented with minimum and maximum respectively, which are also vectorizable.
+      * https://en.wikipedia.org/wiki/Three-valued_logic
+      *
+      * This logic does not apply for "not" and "xor" - they work with default implementation for NULLs:
+      *  anything with NULL returns NULL, otherwise use conventional two-valued logic.
+      */
+static constexpr UInt8 False = 0;   /// 0b00
+static constexpr UInt8 Null = 1;    /// 0b01
+static constexpr UInt8 True = 2;   /// 0b10
 
 template <typename T>
 inline ResultType make_value(T value) {
@@ -61,8 +81,12 @@ struct AndImpl {
     using ResultType = UInt8;
 
     static inline constexpr bool is_saturable() { return true; }
-    static inline constexpr bool is_saturated_value(UInt8 a) { return a == Ternary::False; }
+    /// Final value in two-valued logic (no further operations with True, False will change this value)
+    static inline constexpr bool is_saturated_value(bool a) { return !a; }
+    /// Final value in three-valued logic (no further operations with True, False, Null will change this value)
+    static inline constexpr bool is_saturated_value_ternary(UInt8 a) { return a == Ternary::False; }
     static inline constexpr ResultType apply(UInt8 a, UInt8 b) { return a & b; }
+    static inline constexpr ResultType ternary_apply(UInt8 a, UInt8 b) { return std::min(a, b); }
     static inline constexpr bool special_implementation_for_nulls() { return true; }
 };
 
@@ -70,8 +94,10 @@ struct OrImpl {
     using ResultType = UInt8;
 
     static inline constexpr bool is_saturable() { return true; }
-    static inline constexpr bool is_saturated_value(UInt8 a) { return a == Ternary::True; }
+    static inline constexpr bool is_saturated_value(bool a) { return a; }
+    static inline constexpr bool is_saturated_value_ternary(UInt8 a) { return a == Ternary::True; }
     static inline constexpr ResultType apply(UInt8 a, UInt8 b) { return a | b; }
+    static inline constexpr ResultType ternary_apply(UInt8 a, UInt8 b) { return std::max(a, b); }
     static inline constexpr bool special_implementation_for_nulls() { return true; }
 };
 
@@ -80,14 +106,9 @@ struct XorImpl {
 
     static inline constexpr bool is_saturable() { return false; }
     static inline constexpr bool is_saturated_value(bool) { return false; }
-    /** Considering that CH uses UInt8 for representation of boolean values this function
-      * returns 255 as "true" but the current implementation of logical functions suggests that
-      * any nonzero value is "true" as well. Also the current code provides no guarantee
-      * for "true" to be represented with the value of 1.
-      */
-    static inline constexpr ResultType apply(UInt8 a, UInt8 b) {
-        return (a != b) ? Ternary::True : Ternary::False;
-    }
+    static inline constexpr bool is_saturated_value_ternary(UInt8) { return false; }
+    static inline constexpr ResultType apply(UInt8 a, UInt8 b) { return a != b; }
+    static inline constexpr ResultType ternary_apply(UInt8 a, UInt8 b) { return a != b; }
     static inline constexpr bool special_implementation_for_nulls() { return false; }
 };
 

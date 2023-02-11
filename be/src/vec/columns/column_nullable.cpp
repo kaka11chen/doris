@@ -309,6 +309,16 @@ ColumnPtr ColumnNullable::filter(const Filter& filt, ssize_t result_size_hint) c
     return ColumnNullable::create(filtered_data, filtered_null_map);
 }
 
+size_t ColumnNullable::filter_range(const Filter& filt, size_t from, size_t to) {
+    auto s1 = get_nested_column().filter_range(filt, from, to);
+    get_null_map_column().filter_range(filt, from, to);
+//    ColumnPtr nested_col = get_nested_column_ptr();
+//    ColumnPtr null_map_col = get_null_map_column_ptr();
+//    get_nested_column().filter_range(filt, from, to);
+//    get_null_map_column().filter_range(filt, from, to);
+    return s1;
+}
+
 Status ColumnNullable::filter_by_selector(const uint16_t* sel, size_t sel_size, IColumn* col_ptr) {
     const ColumnNullable* nullable_col_ptr = reinterpret_cast<const ColumnNullable*>(col_ptr);
     ColumnPtr nest_col_ptr = nullable_col_ptr->nested_column;
@@ -621,3 +631,4 @@ ColumnPtr remove_nullable(const ColumnPtr& column) {
 }
 
 } // namespace doris::vectorized
+

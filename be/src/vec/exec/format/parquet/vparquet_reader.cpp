@@ -540,93 +540,96 @@ Status ParquetReader::_process_page_index(const tparquet::RowGroup& row_group,
         _statistics.read_rows += row_group.num_rows;
     };
 
-    if (_colname_to_value_range == nullptr || _colname_to_value_range->empty()) {
-        read_whole_row_group();
-        return Status::OK();
-    }
-    PageIndex page_index;
-    if (!_has_page_index(row_group.columns, page_index)) {
-        read_whole_row_group();
-        return Status::OK();
-    }
-    uint8_t col_index_buff[page_index._column_index_size];
-    size_t bytes_read = 0;
-    Slice result(col_index_buff, page_index._column_index_size);
-    IOContext io_ctx;
-    RETURN_IF_ERROR(
-            _file_reader->read_at(page_index._column_index_start, result, io_ctx, &bytes_read));
-    auto& schema_desc = _file_metadata->schema();
-    std::vector<RowRange> skipped_row_ranges;
-    uint8_t off_index_buff[page_index._offset_index_size];
-    Slice res(off_index_buff, page_index._offset_index_size);
-    RETURN_IF_ERROR(
-            _file_reader->read_at(page_index._offset_index_start, res, io_ctx, &bytes_read));
-    for (auto& read_col : _read_columns) {
-        auto conjunct_iter = _colname_to_value_range->find(read_col._file_slot_name);
-        if (_colname_to_value_range->end() == conjunct_iter) {
-            continue;
-        }
-        auto& chunk = row_group.columns[read_col._parquet_col_id];
-        tparquet::ColumnIndex column_index;
-        if (chunk.column_index_offset == 0 && chunk.column_index_length == 0) {
-            continue;
-        }
-        RETURN_IF_ERROR(page_index.parse_column_index(chunk, col_index_buff, &column_index));
-        const int num_of_pages = column_index.null_pages.size();
-        if (num_of_pages <= 0) {
-            continue;
-        }
-        auto& conjuncts = conjunct_iter->second;
-        std::vector<int> skipped_page_range;
-        const FieldSchema* col_schema = schema_desc.get_column(read_col._file_slot_name);
-        page_index.collect_skipped_page_range(&column_index, conjuncts, col_schema,
-                                              skipped_page_range);
-        if (skipped_page_range.empty()) {
-            continue;
-        }
-        tparquet::OffsetIndex offset_index;
-        RETURN_IF_ERROR(page_index.parse_offset_index(chunk, off_index_buff, &offset_index));
-        for (int page_id : skipped_page_range) {
-            RowRange skipped_row_range;
-            page_index.create_skipped_row_range(offset_index, row_group.num_rows, page_id,
-                                                &skipped_row_range);
-            // use the union row range
-            skipped_row_ranges.emplace_back(skipped_row_range);
-        }
-        _col_offsets.emplace(read_col._parquet_col_id, offset_index);
-    }
-    if (skipped_row_ranges.empty()) {
-        read_whole_row_group();
-        return Status::OK();
-    }
-
-    std::sort(skipped_row_ranges.begin(), skipped_row_ranges.end(),
-              [](const RowRange& lhs, const RowRange& rhs) {
-                  return std::tie(lhs.first_row, lhs.last_row) <
-                         std::tie(rhs.first_row, rhs.last_row);
-              });
-    int skip_end = 0;
-    int64_t read_rows = 0;
-    for (auto& skip_range : skipped_row_ranges) {
-        if (skip_end >= skip_range.first_row) {
-            if (skip_end < skip_range.last_row) {
-                skip_end = skip_range.last_row;
-            }
-        } else {
-            // read row with candidate ranges rather than skipped ranges
-            candidate_row_ranges.emplace_back(skip_end, skip_range.first_row);
-            read_rows += skip_range.first_row - skip_end;
-            skip_end = skip_range.last_row;
-        }
-    }
-    DCHECK_LE(skip_end, row_group.num_rows);
-    if (skip_end != row_group.num_rows) {
-        candidate_row_ranges.emplace_back(skip_end, row_group.num_rows);
-        read_rows += row_group.num_rows - skip_end;
-    }
-    _statistics.read_rows += read_rows;
-    _statistics.filtered_page_rows += row_group.num_rows - read_rows;
+    read_whole_row_group();
     return Status::OK();
+//
+//    if (_colname_to_value_range == nullptr || _colname_to_value_range->empty()) {
+//        read_whole_row_group();
+//        return Status::OK();
+//    }
+//    PageIndex page_index;
+//    if (!_has_page_index(row_group.columns, page_index)) {
+//        read_whole_row_group();
+//        return Status::OK();
+//    }
+//    uint8_t col_index_buff[page_index._column_index_size];
+//    size_t bytes_read = 0;
+//    Slice result(col_index_buff, page_index._column_index_size);
+//    IOContext io_ctx;
+//    RETURN_IF_ERROR(
+//            _file_reader->read_at(page_index._column_index_start, result, io_ctx, &bytes_read));
+//    auto& schema_desc = _file_metadata->schema();
+//    std::vector<RowRange> skipped_row_ranges;
+//    uint8_t off_index_buff[page_index._offset_index_size];
+//    Slice res(off_index_buff, page_index._offset_index_size);
+//    RETURN_IF_ERROR(
+//            _file_reader->read_at(page_index._offset_index_start, res, io_ctx, &bytes_read));
+//    for (auto& read_col : _read_columns) {
+//        auto conjunct_iter = _colname_to_value_range->find(read_col._file_slot_name);
+//        if (_colname_to_value_range->end() == conjunct_iter) {
+//            continue;
+//        }
+//        auto& chunk = row_group.columns[read_col._parquet_col_id];
+//        tparquet::ColumnIndex column_index;
+//        if (chunk.column_index_offset == 0 && chunk.column_index_length == 0) {
+//            continue;
+//        }
+//        RETURN_IF_ERROR(page_index.parse_column_index(chunk, col_index_buff, &column_index));
+//        const int num_of_pages = column_index.null_pages.size();
+//        if (num_of_pages <= 0) {
+//            continue;
+//        }
+//        auto& conjuncts = conjunct_iter->second;
+//        std::vector<int> skipped_page_range;
+//        const FieldSchema* col_schema = schema_desc.get_column(read_col._file_slot_name);
+//        page_index.collect_skipped_page_range(&column_index, conjuncts, col_schema,
+//                                              skipped_page_range);
+//        if (skipped_page_range.empty()) {
+//            continue;
+//        }
+//        tparquet::OffsetIndex offset_index;
+//        RETURN_IF_ERROR(page_index.parse_offset_index(chunk, off_index_buff, &offset_index));
+//        for (int page_id : skipped_page_range) {
+//            RowRange skipped_row_range;
+//            page_index.create_skipped_row_range(offset_index, row_group.num_rows, page_id,
+//                                                &skipped_row_range);
+//            // use the union row range
+//            skipped_row_ranges.emplace_back(skipped_row_range);
+//        }
+//        _col_offsets.emplace(read_col._parquet_col_id, offset_index);
+//    }
+//    if (skipped_row_ranges.empty()) {
+//        read_whole_row_group();
+//        return Status::OK();
+//    }
+//
+//    std::sort(skipped_row_ranges.begin(), skipped_row_ranges.end(),
+//              [](const RowRange& lhs, const RowRange& rhs) {
+//                  return std::tie(lhs.first_row, lhs.last_row) <
+//                         std::tie(rhs.first_row, rhs.last_row);
+//              });
+//    int skip_end = 0;
+//    int64_t read_rows = 0;
+//    for (auto& skip_range : skipped_row_ranges) {
+//        if (skip_end >= skip_range.first_row) {
+//            if (skip_end < skip_range.last_row) {
+//                skip_end = skip_range.last_row;
+//            }
+//        } else {
+//            // read row with candidate ranges rather than skipped ranges
+//            candidate_row_ranges.emplace_back(skip_end, skip_range.first_row);
+//            read_rows += skip_range.first_row - skip_end;
+//            skip_end = skip_range.last_row;
+//        }
+//    }
+//    DCHECK_LE(skip_end, row_group.num_rows);
+//    if (skip_end != row_group.num_rows) {
+//        candidate_row_ranges.emplace_back(skip_end, row_group.num_rows);
+//        read_rows += row_group.num_rows - skip_end;
+//    }
+//    _statistics.read_rows += read_rows;
+//    _statistics.filtered_page_rows += row_group.num_rows - read_rows;
+//    return Status::OK();
 }
 
 Status ParquetReader::_process_row_group_filter(const tparquet::RowGroup& row_group,
@@ -690,3 +693,4 @@ int64_t ParquetReader::_get_column_start_offset(const tparquet::ColumnMetaData& 
     return column.data_page_offset;
 }
 } // namespace doris::vectorized
+

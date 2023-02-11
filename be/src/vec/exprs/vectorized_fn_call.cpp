@@ -42,8 +42,6 @@ doris::Status VectorizedFnCall::prepare(doris::RuntimeState* state,
     argument_template.reserve(_children.size());
     std::vector<std::string_view> child_expr_name;
     for (auto child : _children) {
-        // TODO: rethink we really create column here. maybe only need nullptr just to
-        // get the function
         auto column = child->data_type()->create_column();
         argument_template.emplace_back(std::move(column), child->data_type(), child->expr_name());
         child_expr_name.emplace_back(child->expr_name());
@@ -87,6 +85,7 @@ void VectorizedFnCall::close(doris::RuntimeState* state, VExprContext* context,
 doris::Status VectorizedFnCall::execute(VExprContext* context, doris::vectorized::Block* block,
                                         int* result_column_id) {
     // TODO: not execute const expr again, but use the const column in function context
+//    struct timespec startT, endT;
     doris::vectorized::ColumnNumbers arguments(_children.size());
     for (int i = 0; i < _children.size(); ++i) {
         int column_id = -1;
@@ -97,18 +96,22 @@ doris::Status VectorizedFnCall::execute(VExprContext* context, doris::vectorized
     size_t num_columns_without_result = block->columns();
     // prepare a column to save result
     block->insert({nullptr, _data_type, _expr_name});
-    if (_function->can_fast_execute()) {
+    /*if (_function->can_fast_execute()) {
         bool ok = fast_execute(context->fn_context(_fn_context_index), *block, arguments,
                                num_columns_without_result, block->rows());
         if (ok) {
             *result_column_id = num_columns_without_result;
             return Status::OK();
         }
-    }
+    }*/
 
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
     RETURN_IF_ERROR(_function->execute(context->fn_context(_fn_context_index), *block, arguments,
                                        num_columns_without_result, block->rows(), false));
     *result_column_id = num_columns_without_result;
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> VectorizedFnCall(%s)::execute %lu ns\n", expr_name().c_str(),
+//            (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     return Status::OK();
 }
 

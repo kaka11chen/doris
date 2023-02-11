@@ -37,6 +37,14 @@
 #include "vec/common/unaligned.h"
 #include "vec/core/sort_block.h"
 
+#ifdef __x86_64__
+#include <immintrin.h>
+#endif
+#if defined(__ARM_NEON__) || defined(__aarch64__)
+#include <arm_acle.h>
+#include <arm_neon.h>
+#endif
+
 namespace doris::vectorized {
 
 template <typename T>
@@ -440,6 +448,82 @@ ColumnPtr ColumnVector<T>::filter(const IColumn::Filter& filt, ssize_t result_si
 }
 
 template <typename T>
+size_t ColumnVector<T>::filter_range(const IColumn::Filter& filter, size_t from, size_t to) {
+    auto start_offset = from;
+    auto result_offset = from;
+    T* to_filter_data = data.data();
+
+#ifdef __AVX2__
+    const uint8_t* f_data = filter.data();
+    constexpr size_t data_type_size = sizeof(T);
+
+    constexpr size_t kBatchNums = 256 / (8 * sizeof(uint8_t));
+    const __m256i all0 = _mm256_setzero_si256();
+
+    // batch nums is kBatchNums
+    // we will process filter at start_offset, start_offset + 1, ..., start_offset + kBatchNums - 1 in one batch
+    while (start_offset + kBatchNums <= to) {
+        __m256i f = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(f_data + start_offset));
+        uint32_t mask = _mm256_movemask_epi8(_mm256_cmpgt_epi8(f, all0));
+
+        if (mask == 0) {
+            // all no hit, pass
+        } else if (mask == 0xffffffff) {
+            // all hit, copy all
+            memmove(to_filter_data + result_offset, to_filter_data + start_offset, kBatchNums * data_type_size);
+            result_offset += kBatchNums;
+
+        } else {
+            phmap::priv::BitMask<uint32_t, 32> bitmask(mask);
+            for (auto idx : bitmask) {
+                *(to_filter_data + result_offset++) = *(to_filter_data + start_offset + idx);
+            }
+        }
+
+        start_offset += kBatchNums;
+    }
+#elif defined(__ARM_NEON__) || defined(__aarch64__)
+    const uint8_t* f_data = filter.data() + from;
+    constexpr size_t data_type_size = sizeof(T);
+
+    constexpr size_t kBatchNums = 128 / (8 * sizeof(uint8_t));
+    while (start_offset + kBatchNums < to) {
+        uint8x16_t filter = vld1q_u8(f_data);
+        if (vmaxvq_u8(filter) == 0) {
+            // skip
+        } else if (vminvq_u8(filter)) {
+            memmove(to_filter_data + result_offset, to_filter_data + start_offset, kBatchNums * data_type_size);
+            result_offset += kBatchNums;
+        } else {
+            for (int i = 0; i < kBatchNums; ++i) {
+                // the index for vgetq_lane_u8 should be a literal integer
+                // but in ASAN/DEBUG the loop is unrolled. so we won't call vgetq_lane_u8
+                // in ASAN/DEBUG
+#ifndef NDEBUG
+                if (vgetq_lane_u8(filter, i)) {
+#else
+                if (f_data[i]) {
+#endif
+                    *(to_filter_data + result_offset++) = *(to_filter_data + start_offset + i);
+                }
+            }
+        }
+
+        start_offset += kBatchNums;
+        f_data += kBatchNums;
+    }
+#endif
+    for (auto i = start_offset; i < to; ++i) {
+        if (filter[i]) {
+            *(to_filter_data + result_offset) = *(to_filter_data + i);
+            result_offset++;
+        }
+    }
+    this->resize(result_offset);
+    return result_offset;
+}
+
+template <typename T>
 ColumnPtr ColumnVector<T>::permute(const IColumn::Permutation& perm, size_t limit) const {
     size_t size = data.size();
 
@@ -562,3 +646,4 @@ template class ColumnVector<Int128>;
 template class ColumnVector<Float32>;
 template class ColumnVector<Float64>;
 } // namespace doris::vectorized
+
