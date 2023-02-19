@@ -60,6 +60,9 @@ public:
 
     virtual Status execute(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                            size_t result, size_t input_rows_count, bool dry_run) = 0;
+
+    virtual Status execute2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
+                           size_t result, size_t input_rows_count, bool dry_run) = 0;
 };
 
 using PreparedFunctionPtr = std::shared_ptr<IPreparedFunction>;
@@ -69,6 +72,9 @@ public:
     Status execute(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                    size_t result, size_t input_rows_count, bool dry_run = false) final;
 
+    Status execute2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
+                   size_t result, size_t input_rows_count, bool dry_run = false) final;
+
 protected:
     virtual Status execute_impl_dry_run(FunctionContext* context, Block& block,
                                         const ColumnNumbers& arguments, size_t result,
@@ -76,7 +82,17 @@ protected:
         return execute_impl(context, block, arguments, result, input_rows_count);
     }
 
+    virtual Status execute_impl_dry_run2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+                                        const ColumnNumbers& arguments, size_t result,
+                                        size_t input_rows_count) {
+        return execute_impl2(context, columns_with_type_and_name, arguments, result, input_rows_count);
+    }
+
     virtual Status execute_impl(FunctionContext* context, Block& block,
+                                const ColumnNumbers& arguments, size_t result,
+                                size_t input_rows_count) = 0;
+
+    virtual Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
                                 const ColumnNumbers& arguments, size_t result,
                                 size_t input_rows_count) = 0;
 
@@ -109,11 +125,21 @@ private:
     Status default_implementation_for_nulls(FunctionContext* context, Block& block,
                                             const ColumnNumbers& args, size_t result,
                                             size_t input_rows_count, bool dry_run, bool* executed);
+    Status default_implementation_for_nulls2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+                                            const ColumnNumbers& args, size_t result,
+                                            size_t input_rows_count, bool dry_run, bool* executed);
     Status default_implementation_for_constant_arguments(FunctionContext* context, Block& block,
                                                          const ColumnNumbers& args, size_t result,
                                                          size_t input_rows_count, bool dry_run,
                                                          bool* executed);
+    Status default_implementation_for_constant_arguments2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+                                                         const ColumnNumbers& args, size_t result,
+                                                         size_t input_rows_count, bool dry_run,
+                                                         bool* executed);
     Status execute_without_low_cardinality_columns(FunctionContext* context, Block& block,
+                                                   const ColumnNumbers& arguments, size_t result,
+                                                   size_t input_rows_count, bool dry_run);
+    Status execute_without_low_cardinality_columns2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
                                                    const ColumnNumbers& arguments, size_t result,
                                                    size_t input_rows_count, bool dry_run);
 };
@@ -134,6 +160,11 @@ public:
     virtual PreparedFunctionPtr prepare(FunctionContext* context, const Block& sample_block,
                                         const ColumnNumbers& arguments, size_t result) const = 0;
 
+    /// Do preparations and return executable.
+    /// sample_block should contain data types of arguments and values of constants, if relevant.
+    virtual PreparedFunctionPtr prepare2(FunctionContext* context, const ColumnsWithTypeAndName& columns_with_type_and_name,
+                                        const ColumnNumbers& arguments, size_t result) const = 0;
+
     /// Override this when function need to store state in the `FunctionContext`, or do some
     /// preparation work according to information from `FunctionContext`.
     virtual Status prepare(FunctionContext* context, FunctionContext::FunctionStateScope scope) {
@@ -145,6 +176,12 @@ public:
                            size_t result, size_t input_rows_count, bool dry_run = false) {
         return prepare(context, block, arguments, result)
                 ->execute(context, block, arguments, result, input_rows_count, dry_run);
+    }
+
+    virtual Status execute2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
+                           size_t result, size_t input_rows_count, bool dry_run = false) {
+        return prepare2(context, columns_with_type_and_name, arguments, result)
+                ->execute2(context, columns_with_type_and_name, arguments, result, input_rows_count, dry_run);
     }
 
     /// Do cleaning work when function is finished, i.e., release state variables in the
@@ -416,6 +453,11 @@ public:
     Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) override = 0;
 
+    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
+                        size_t result, size_t input_rows_count) override {
+        return Status::NotSupported("function {} not support execute_impl2", get_name());
+    }
+
     /// Override this functions to change default implementation behavior. See details in IMyFunction.
     bool use_default_implementation_for_nulls() const override { return true; }
     bool use_default_implementation_for_constants() const override { return false; }
@@ -428,7 +470,9 @@ public:
     bool is_deterministic_in_scope_of_query() const override { return true; }
 
     using PreparedFunctionImpl::execute;
+    using PreparedFunctionImpl::execute2;
     using PreparedFunctionImpl::execute_impl_dry_run;
+    using PreparedFunctionImpl::execute_impl_dry_run2;
     using FunctionBuilderImpl::get_return_type_impl;
     using FunctionBuilderImpl::get_variadic_argument_types_impl;
     using FunctionBuilderImpl::get_return_type;
@@ -438,6 +482,14 @@ public:
                                              const ColumnNumbers& /*arguments*/,
                                              size_t /*result*/) const final {
         LOG(FATAL) << "prepare is not implemented for IFunction";
+        __builtin_unreachable();
+    }
+
+    [[noreturn]] PreparedFunctionPtr prepare2(FunctionContext* context,
+                                             const ColumnsWithTypeAndName& /*sample_block*/,
+                                             const ColumnNumbers& /*arguments*/,
+                                             size_t /*result*/) const final {
+        LOG(FATAL) << "prepare2 is not implemented for IFunction";
         __builtin_unreachable();
     }
 
@@ -477,10 +529,19 @@ protected:
                         size_t result, size_t input_rows_count) final {
         return function->execute_impl(context, block, arguments, result, input_rows_count);
     }
+    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
+                        size_t result, size_t input_rows_count) final {
+        return function->execute_impl2(context, columns_with_type_and_name, arguments, result, input_rows_count);
+    }
     Status execute_impl_dry_run(FunctionContext* context, Block& block,
                                 const ColumnNumbers& arguments, size_t result,
                                 size_t input_rows_count) final {
         return function->execute_impl_dry_run(context, block, arguments, result, input_rows_count);
+    }
+    Status execute_impl_dry_run2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+                                const ColumnNumbers& arguments, size_t result,
+                                size_t input_rows_count) final {
+        return function->execute_impl_dry_run2(context, columns_with_type_and_name, arguments, result, input_rows_count);
     }
     bool use_default_implementation_for_nulls() const final {
         return function->use_default_implementation_for_nulls();
@@ -513,6 +574,12 @@ public:
     const DataTypePtr& get_return_type() const override { return return_type; }
 
     PreparedFunctionPtr prepare(FunctionContext* context, const Block& /*sample_block*/,
+                                const ColumnNumbers& /*arguments*/,
+                                size_t /*result*/) const override {
+        return std::make_shared<DefaultExecutable>(function);
+    }
+
+    PreparedFunctionPtr prepare2(FunctionContext* context, const ColumnsWithTypeAndName& /*sample_block*/,
                                 const ColumnNumbers& /*arguments*/,
                                 size_t /*result*/) const override {
         return std::make_shared<DefaultExecutable>(function);

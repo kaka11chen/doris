@@ -51,6 +51,11 @@ public:
         return nullptr;
     }
 
+    PreparedFunctionPtr prepare2(FunctionContext* context, const ColumnsWithTypeAndName& sample_block,
+                                const ColumnNumbers& arguments, size_t result) const override {
+        return nullptr;
+    }
+
     Status prepare(FunctionContext* context, FunctionContext::FunctionStateScope scope) override;
 
     Status execute(FunctionContext* context, Block& block, const ColumnNumbers& arguments,

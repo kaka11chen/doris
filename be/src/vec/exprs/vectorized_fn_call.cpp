@@ -94,17 +94,19 @@ doris::Status VectorizedFnCall::execute(VExprContext* context, doris::vectorized
     size_t num_columns_without_result = block->columns();
     // prepare a column to save result
     block->insert({nullptr, _data_type, _expr_name});
-    if (_can_fast_execute) {
-        // if not find fast execute result column, means do not need check fast execute again
-        _can_fast_execute = fast_execute(context->fn_context(_fn_context_index), *block, arguments,
-                                         num_columns_without_result, block->rows());
-        if (_can_fast_execute) {
-            *result_column_id = num_columns_without_result;
-            return Status::OK();
-        }
-    }
+//    if (_can_fast_execute) {
+//        // if not find fast execute result column, means do not need check fast execute again
+//        _can_fast_execute = fast_execute(context->fn_context(_fn_context_index), *block, arguments,
+//                                         num_columns_without_result, block->rows());
+//        if (_can_fast_execute) {
+//            *result_column_id = num_columns_without_result;
+//            return Status::OK();
+//        }
+//    }
 
-    RETURN_IF_ERROR(_function->execute(context->fn_context(_fn_context_index), *block, arguments,
+//    RETURN_IF_ERROR(_function->execute(context->fn_context(_fn_context_index), *block, arguments,
+//                                       num_columns_without_result, block->rows(), false));
+    RETURN_IF_ERROR(_function->execute2(context->fn_context(_fn_context_index), *block->get_data(), arguments,
                                        num_columns_without_result, block->rows(), false));
     *result_column_id = num_columns_without_result;
     return Status::OK();

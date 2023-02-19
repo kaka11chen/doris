@@ -1056,6 +1056,11 @@ protected:
         return wrapper_function(context, block, new_arguments, result, input_rows_count);
     }
 
+    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
+                        size_t result, size_t input_rows_count) override {
+        return Status::NotSupported("function not support execute_impl2");
+    }
+
     bool use_default_implementation_for_nulls() const override { return false; }
     bool use_default_implementation_for_constants() const override { return true; }
     bool use_default_implementation_for_low_cardinality_columns() const override { return false; }
@@ -1277,6 +1282,14 @@ public:
     const DataTypePtr& get_return_type() const override { return return_type; }
 
     PreparedFunctionPtr prepare(FunctionContext* context, const Block& /*sample_block*/,
+                                const ColumnNumbers& /*arguments*/,
+                                size_t /*result*/) const override {
+        return std::make_shared<PreparedFunctionCast>(
+                prepare_unpack_dictionaries(context, get_argument_types()[0], get_return_type()),
+                name);
+    }
+
+    PreparedFunctionPtr prepare2(FunctionContext* context, const ColumnsWithTypeAndName & /*sample_block*/,
                                 const ColumnNumbers& /*arguments*/,
                                 size_t /*result*/) const override {
         return std::make_shared<PreparedFunctionCast>(

@@ -104,6 +104,19 @@ NullPresence get_null_presence(const Block& block, const ColumnNumbers& args) {
     return res;
 }
 
+NullPresence get_null_presence2(const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args) {
+    NullPresence res;
+
+    for (const auto& arg : args) {
+        const auto& elem = columns_with_type_and_name[arg];
+
+        if (!res.has_nullable) res.has_nullable = elem.type->is_nullable();
+        if (!res.has_null_constant) res.has_null_constant = elem.type->only_null();
+    }
+
+    return res;
+}
+
 [[maybe_unused]] NullPresence get_null_presence(const ColumnsWithTypeAndName& args) {
     NullPresence res;
 
@@ -113,6 +126,15 @@ NullPresence get_null_presence(const Block& block, const ColumnNumbers& args) {
     }
 
     return res;
+}
+
+bool allArgumentsAreConstants2(const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args) {
+    for (auto arg : args) {
+        if (!is_column_const(*columns_with_type_and_name[arg].column)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool allArgumentsAreConstants(const Block& block, const ColumnNumbers& args) {
@@ -199,6 +221,80 @@ Status PreparedFunctionImpl::default_implementation_for_constant_arguments(
     return Status::OK();
 }
 
+Status PreparedFunctionImpl::default_implementation_for_constant_arguments2(
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
+        size_t input_rows_count, bool dry_run, bool* executed) {
+    *executed = false;
+    ColumnNumbers arguments_to_remain_constants = get_arguments_that_are_always_constant();
+
+    /// Check that these arguments are really constant.
+    for (auto arg_num : arguments_to_remain_constants) {
+        if (arg_num < args.size() &&
+            !is_column_const(*columns_with_type_and_name[args[arg_num]].column)) {
+            return Status::RuntimeError("Argument at index {} for function {}  must be constant",
+                                        arg_num, get_name());
+        }
+    }
+
+    if (args.empty() || !use_default_implementation_for_constants() ||
+        !allArgumentsAreConstants2(columns_with_type_and_name, args)) {
+        return Status::OK();
+    }
+
+    ColumnsWithTypeAndName temporary_cols;
+    bool have_converted_columns = false;
+
+    size_t arguments_size = args.size();
+    for (size_t arg_num = 0; arg_num < arguments_size; ++arg_num) {
+        const ColumnWithTypeAndName& column = columns_with_type_and_name[args[arg_num]];
+
+        if (arguments_to_remain_constants.end() != std::find(arguments_to_remain_constants.begin(),
+                                                             arguments_to_remain_constants.end(),
+                                                             arg_num)) {
+            temporary_cols.emplace_back(ColumnWithTypeAndName{column.column->clone_resized(1), column.type, column.name});
+        } else {
+            have_converted_columns = true;
+            temporary_cols.emplace_back(ColumnWithTypeAndName
+                    {assert_cast<const ColumnConst*>(column.column.get())->get_data_column_ptr(),
+                     column.type, column.name});
+        }
+    }
+
+    /** When using default implementation for constants, the function requires at least one argument
+      *  not in "arguments_to_remain_constants" set. Otherwise we get infinite recursion.
+      */
+    if (!have_converted_columns) {
+        return Status::RuntimeError(
+                "Number of arguments for function {} doesn't match: the function "
+                "requires more arguments",
+                get_name());
+    }
+
+    temporary_cols.emplace_back(columns_with_type_and_name[result]);
+
+    ColumnNumbers temporary_argument_numbers(arguments_size);
+    for (size_t i = 0; i < arguments_size; ++i) {
+        temporary_argument_numbers[i] = i;
+    }
+
+    RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
+            context, temporary_cols, temporary_argument_numbers, arguments_size,
+            temporary_cols.front().column->size(), dry_run));
+
+    ColumnPtr result_column;
+    /// extremely rare case, when we have function with completely const arguments
+    /// but some of them produced by non is_deterministic function
+    if (temporary_cols[arguments_size].column->size() > 1) {
+        result_column = temporary_cols[arguments_size].column->clone_resized(1);
+    } else {
+        result_column = temporary_cols[arguments_size].column;
+    }
+
+    columns_with_type_and_name[result].column = ColumnConst::create(result_column, input_rows_count);
+    *executed = true;
+    return Status::OK();
+}
+
 Status PreparedFunctionImpl::default_implementation_for_nulls(
         FunctionContext* context, Block& block, const ColumnNumbers& args, size_t result,
         size_t input_rows_count, bool dry_run, bool* executed) {
@@ -231,6 +327,38 @@ Status PreparedFunctionImpl::default_implementation_for_nulls(
     return Status::OK();
 }
 
+Status PreparedFunctionImpl::default_implementation_for_nulls2(
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
+        size_t input_rows_count, bool dry_run, bool* executed) {
+    *executed = false;
+    if (args.empty() || !use_default_implementation_for_nulls()) {
+        return Status::OK();
+    }
+
+    NullPresence null_presence = get_null_presence2(columns_with_type_and_name, args);
+
+    if (null_presence.has_null_constant) {
+        columns_with_type_and_name[result].column =
+                columns_with_type_and_name[result].type->create_column_const(input_rows_count, Null());
+        *executed = true;
+        return Status::OK();
+    }
+
+    if (null_presence.has_nullable) {
+        auto [temporary_cols, new_args, new_result] =
+                create_block_with_nested_columns2(columns_with_type_and_name, args, result);
+        RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
+                context, temporary_cols, new_args, new_result, temporary_cols.front().column->size(), dry_run));
+        columns_with_type_and_name[result].column =
+                wrap_in_nullable(temporary_cols[new_result].column, columns_with_type_and_name, args,
+                                 result, input_rows_count);
+        *executed = true;
+        return Status::OK();
+    }
+    *executed = false;
+    return Status::OK();
+}
+
 Status PreparedFunctionImpl::execute_without_low_cardinality_columns(
         FunctionContext* context, Block& block, const ColumnNumbers& args, size_t result,
         size_t input_rows_count, bool dry_run) {
@@ -252,6 +380,27 @@ Status PreparedFunctionImpl::execute_without_low_cardinality_columns(
         return execute_impl(context, block, args, result, input_rows_count);
 }
 
+Status PreparedFunctionImpl::execute_without_low_cardinality_columns2(
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
+        size_t input_rows_count, bool dry_run) {
+    bool executed = false;
+    RETURN_IF_ERROR(default_implementation_for_constant_arguments2(
+            context, columns_with_type_and_name, args, result, input_rows_count, dry_run, &executed));
+    if (executed) {
+        return Status::OK();
+    }
+    RETURN_IF_ERROR(default_implementation_for_nulls2(context, columns_with_type_and_name, args, result, input_rows_count,
+                                                     dry_run, &executed));
+    if (executed) {
+        return Status::OK();
+    }
+
+    if (dry_run)
+        return execute_impl_dry_run2(context, columns_with_type_and_name, args, result, input_rows_count);
+    else
+        return execute_impl2(context, columns_with_type_and_name, args, result, input_rows_count);
+}
+
 Status PreparedFunctionImpl::execute(FunctionContext* context, Block& block,
                                      const ColumnNumbers& args, size_t result,
                                      size_t input_rows_count, bool dry_run) {
@@ -271,6 +420,28 @@ Status PreparedFunctionImpl::execute(FunctionContext* context, Block& block,
     //        }
     //    } else
     return execute_without_low_cardinality_columns(context, block, args, result, input_rows_count,
+                                                   dry_run);
+}
+
+Status PreparedFunctionImpl::execute2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+                                     const ColumnNumbers& args, size_t result,
+                                     size_t input_rows_count, bool dry_run) {
+    //    if (use_default_implementation_for_low_cardinality_columns()) {
+    //        auto& res = block.safe_get_by_position(result);
+    //        Block block_without_low_cardinality = block.clone_without_columns();
+    //
+    //        for (auto arg : args)
+    //            block_without_low_cardinality.safe_get_by_position(arg).column =
+    //                    block.safe_get_by_position(arg).column;
+    //
+    //        {
+    //            RETURN_IF_ERROR(execute_without_low_cardinality_columns(
+    //                    context, block_without_low_cardinality, args, result, input_rows_count,
+    //                    dry_run));
+    //            res.column = block_without_low_cardinality.safe_get_by_position(result).column;
+    //        }
+    //    } else
+    return execute_without_low_cardinality_columns2(context, columns_with_type_and_name, args, result, input_rows_count,
                                                    dry_run);
 }
 
