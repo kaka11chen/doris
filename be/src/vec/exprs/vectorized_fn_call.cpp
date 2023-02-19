@@ -84,12 +84,16 @@ void VectorizedFnCall::close(doris::RuntimeState* state, VExprContext* context,
 doris::Status VectorizedFnCall::execute(VExprContext* context, doris::vectorized::Block* block,
                                         int* result_column_id) {
     // TODO: not execute const expr again, but use the const column in function context
+//    struct timespec startT, endT;
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
     doris::vectorized::ColumnNumbers arguments(_children.size());
     for (int i = 0; i < _children.size(); ++i) {
         int column_id = -1;
         RETURN_IF_ERROR(_children[i]->execute(context, block, &column_id));
         arguments[i] = column_id;
     }
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> execute _children %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     // call function
     size_t num_columns_without_result = block->columns();
     // prepare a column to save result

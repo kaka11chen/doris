@@ -84,6 +84,56 @@ ColumnPtr wrap_in_nullable(const ColumnPtr& src, const Block& block, const Colum
                                   result_null_map_column);
 }
 
+ColumnPtr wrap_in_nullable2(const ColumnPtr& src, const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args,
+                           size_t result, size_t input_rows_count) {
+    ColumnPtr result_null_map_column;
+
+    /// If result is already nullable.
+    ColumnPtr src_not_nullable = src;
+
+    if (src->only_null())
+        return src;
+    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
+        src_not_nullable = nullable->get_nested_column_ptr();
+        result_null_map_column = nullable->get_null_map_column_ptr();
+    }
+
+    for (const auto& arg : args) {
+        const ColumnWithTypeAndName& elem = columns_with_type_and_name[arg];
+        if (!elem.type->is_nullable()) continue;
+
+        /// Const Nullable that are NULL.
+        if (elem.column->only_null())
+            return columns_with_type_and_name[result].type->create_column_const(input_rows_count,
+                                                                           Null());
+
+        if (is_column_const(*elem.column)) continue;
+
+        if (auto* nullable = check_and_get_column<ColumnNullable>(*elem.column)) {
+            const ColumnPtr& null_map_column = nullable->get_null_map_column_ptr();
+            if (!result_null_map_column) {
+                result_null_map_column = null_map_column->clone_resized(null_map_column->size());
+            } else {
+                MutableColumnPtr mutable_result_null_map_column =
+                        (*std::move(result_null_map_column)).assume_mutable();
+
+                NullMap& result_null_map =
+                        assert_cast<ColumnUInt8&>(*mutable_result_null_map_column).get_data();
+                const NullMap& src_null_map =
+                        assert_cast<const ColumnUInt8&>(*null_map_column).get_data();
+
+                VectorizedUtils::update_null_map(result_null_map, src_null_map);
+                result_null_map_column = std::move(mutable_result_null_map_column);
+            }
+        }
+    }
+
+    if (!result_null_map_column) return make_nullable(src);
+
+    return ColumnNullable::create(src_not_nullable->convert_to_full_column_if_const(),
+                                  result_null_map_column);
+}
+
 namespace {
 
 struct NullPresence {
@@ -343,15 +393,26 @@ Status PreparedFunctionImpl::default_implementation_for_nulls2(
         *executed = true;
         return Status::OK();
     }
-
+    struct timespec startT, endT;
     if (null_presence.has_nullable) {
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         auto [temporary_cols, new_args, new_result] =
                 create_block_with_nested_columns2(columns_with_type_and_name, args, result);
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
                 context, temporary_cols, new_args, new_result, temporary_cols.front().column->size(), dry_run));
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> execute_without_low_cardinality_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         columns_with_type_and_name[result].column =
-                wrap_in_nullable(temporary_cols[new_result].column, columns_with_type_and_name, args,
+                wrap_in_nullable2(temporary_cols[new_result].column, columns_with_type_and_name, args,
                                  result, input_rows_count);
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> wrap_in_nullable2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+//        clock_gettime(CLOCK_MONOTONIC, &endT);
+//        fprintf(stderr, "==> default_implementation_for_nulls2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         *executed = true;
         return Status::OK();
     }
@@ -383,12 +444,16 @@ Status PreparedFunctionImpl::execute_without_low_cardinality_columns(
 Status PreparedFunctionImpl::execute_without_low_cardinality_columns2(
         FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
         size_t input_rows_count, bool dry_run) {
+//    struct timespec startT, endT;
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
     bool executed = false;
     RETURN_IF_ERROR(default_implementation_for_constant_arguments2(
             context, columns_with_type_and_name, args, result, input_rows_count, dry_run, &executed));
     if (executed) {
         return Status::OK();
     }
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> execute_without_low_cardinality_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     RETURN_IF_ERROR(default_implementation_for_nulls2(context, columns_with_type_and_name, args, result, input_rows_count,
                                                      dry_run, &executed));
     if (executed) {
@@ -441,8 +506,14 @@ Status PreparedFunctionImpl::execute2(FunctionContext* context, ColumnsWithTypeA
     //            res.column = block_without_low_cardinality.safe_get_by_position(result).column;
     //        }
     //    } else
-    return execute_without_low_cardinality_columns2(context, columns_with_type_and_name, args, result, input_rows_count,
-                                                   dry_run);
+    Status status;
+//    struct timespec startT, endT;
+//    clock_gettime(CLOCK_MONOTONIC, &startT);
+    status = execute_without_low_cardinality_columns2(context, columns_with_type_and_name, args, result, input_rows_count,
+                                                    dry_run);
+//    clock_gettime(CLOCK_MONOTONIC, &endT);
+//    fprintf(stderr, "==> execute2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    return status;
 }
 
 void FunctionBuilderImpl::check_number_of_arguments(size_t number_of_arguments) const {

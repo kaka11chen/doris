@@ -700,4 +700,7 @@ using FunctionPtr = std::shared_ptr<IFunction>;
 ColumnPtr wrap_in_nullable(const ColumnPtr& src, const Block& block, const ColumnNumbers& args,
                            size_t result, size_t input_rows_count);
 
+ColumnPtr wrap_in_nullable2(const ColumnPtr& src, const ColumnsWithTypeAndName & columns_with_type_and_name, const ColumnNumbers& args,
+                           size_t result, size_t input_rows_count);
+
 } // namespace doris::vectorized

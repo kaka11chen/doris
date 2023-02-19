@@ -85,6 +85,8 @@ struct NumComparisonImpl {
 
     static void NO_INLINE vector_constant(const PaddedPODArray<A>& a, B b,
                                           PaddedPODArray<UInt8>& c) {
+//        struct timespec startT, endT;
+//        clock_gettime(CLOCK_MONOTONIC, &startT);
         size_t size = a.size();
         const A* a_pos = a.data();
         UInt8* c_pos = c.data();
@@ -95,6 +97,8 @@ struct NumComparisonImpl {
             ++a_pos;
             ++c_pos;
         }
+//        clock_gettime(CLOCK_MONOTONIC, &endT);
+//        fprintf(stderr, "==> vector_constant %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     }
 
     static void constant_vector(A a, const PaddedPODArray<B>& b, PaddedPODArray<UInt8>& c) {
@@ -234,8 +238,12 @@ private:
     bool execute_num_right_type_test2(ColumnsWithTypeAndName& columns_with_type_and_name, size_t result,
                                      const ColumnVector<Int64>* col_left,
                                      const IColumn* col_right_untyped) {
+//        struct timespec startT, endT;
         const ColumnConst *col_right = down_cast<const ColumnConst*>(col_right_untyped);
+//        clock_gettime(CLOCK_MONOTONIC, &startT);
         auto col_res = ColumnUInt8::create();
+//        clock_gettime(CLOCK_MONOTONIC, &endT);
+//        fprintf(stderr, "==> execute_num_right_type_test2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
 
         ColumnUInt8::Container& vec_res = col_res->get_data();
         vec_res.resize(col_left->size());
@@ -613,7 +621,6 @@ public:
                         size_t result, size_t input_rows_count) override {
 //        struct timespec startT, endT;
 //        clock_gettime(CLOCK_MONOTONIC, &startT);
-//        fprintf(stderr, "comp execute_impl2\n");
         const auto& col_with_type_and_name_left = columns_with_type_and_name[arguments[0]];
         const auto& col_with_type_and_name_right = columns_with_type_and_name[arguments[1]];
         const IColumn* col_left_untyped = col_with_type_and_name_left.column.get();
@@ -658,32 +665,32 @@ public:
         //                                 which_right.is_date_or_datetime();
 
         if (left_is_num && right_is_num) {
-            if (!(execute_num_left_type2<UInt8>(columns_with_type_and_name, result, col_left_untyped,
-                                               col_right_untyped) ||
-                  execute_num_left_type2<UInt16>(columns_with_type_and_name, result, col_left_untyped,
-                                                col_right_untyped) ||
-                  execute_num_left_type2<UInt32>(columns_with_type_and_name, result, col_left_untyped,
-                                                col_right_untyped) ||
-                  execute_num_left_type2<UInt64>(columns_with_type_and_name, result, col_left_untyped,
-                                                col_right_untyped) ||
-                  execute_num_left_type2<Int8>(columns_with_type_and_name, result, col_left_untyped, col_right_untyped) ||
-                  execute_num_left_type2<Int16>(columns_with_type_and_name, result, col_left_untyped,
-                                               col_right_untyped) ||
-                  execute_num_left_type2<Int32>(columns_with_type_and_name, result, col_left_untyped,
-                                               col_right_untyped) ||
-                  execute_num_left_type2<Int64>(columns_with_type_and_name, result, col_left_untyped,
-                                               col_right_untyped) ||
-                  execute_num_left_type2<Int128>(columns_with_type_and_name, result, col_left_untyped,
-                                                col_right_untyped) ||
-                  execute_num_left_type2<Float32>(columns_with_type_and_name, result, col_left_untyped,
-                                                 col_right_untyped) ||
-                  execute_num_left_type2<Float64>(columns_with_type_and_name, result, col_left_untyped,
-                                                 col_right_untyped)))
-
-                return Status::RuntimeError("Illegal column {} of first argument of function {}",
-                                            col_left_untyped->get_name(), get_name());
-            //            execute_num_left_type_test(block, result, col_left_untyped,
-            //                                                            col_right_untyped);
+//            if (!(execute_num_left_type2<UInt8>(columns_with_type_and_name, result, col_left_untyped,
+//                                               col_right_untyped) ||
+//                  execute_num_left_type2<UInt16>(columns_with_type_and_name, result, col_left_untyped,
+//                                                col_right_untyped) ||
+//                  execute_num_left_type2<UInt32>(columns_with_type_and_name, result, col_left_untyped,
+//                                                col_right_untyped) ||
+//                  execute_num_left_type2<UInt64>(columns_with_type_and_name, result, col_left_untyped,
+//                                                col_right_untyped) ||
+//                  execute_num_left_type2<Int8>(columns_with_type_and_name, result, col_left_untyped, col_right_untyped) ||
+//                  execute_num_left_type2<Int16>(columns_with_type_and_name, result, col_left_untyped,
+//                                               col_right_untyped) ||
+//                  execute_num_left_type2<Int32>(columns_with_type_and_name, result, col_left_untyped,
+//                                               col_right_untyped) ||
+//                  execute_num_left_type2<Int64>(columns_with_type_and_name, result, col_left_untyped,
+//                                               col_right_untyped) ||
+//                  execute_num_left_type2<Int128>(columns_with_type_and_name, result, col_left_untyped,
+//                                                col_right_untyped) ||
+//                  execute_num_left_type2<Float32>(columns_with_type_and_name, result, col_left_untyped,
+//                                                 col_right_untyped) ||
+//                  execute_num_left_type2<Float64>(columns_with_type_and_name, result, col_left_untyped,
+//                                                 col_right_untyped)))
+//
+//                return Status::RuntimeError("Illegal column {} of first argument of function {}",
+//                                            col_left_untyped->get_name(), get_name());
+            execute_num_left_type_test2(columns_with_type_and_name, result, col_left_untyped,
+                                                                        col_right_untyped);
 //            clock_gettime(CLOCK_MONOTONIC, &endT);
 //            fprintf(stderr, "==> executeImpl %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         } else if (is_decimal_v2(left_type) || is_decimal_v2(right_type)) {
