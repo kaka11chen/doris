@@ -158,6 +158,31 @@ size_t ColumnString::filter(const Filter& filter) {
     return filter_arrays_impl<UInt8, Offset>(chars, offsets, filter);
 }
 
+size_t ColumnString::filter_range(const IColumn::Filter& filter, size_t from, size_t to) {
+    auto start_offset_index = from;
+    auto result_offset_index = from;
+
+    uint8_t* data = chars.data();
+#ifdef __AVX2__
+
+#endif
+
+    for (auto i = start_offset_index; i < to; ++i) {
+        if (filter[i]) {
+            auto size = offsets[i] - offsets[i - 1];
+            // copy data
+            memmove(data + offsets[result_offset_index - 1], data + offsets[i - 1], size);
+
+            // set offsets
+            offsets[result_offset_index] = offsets[result_offset_index - 1] + size;
+            ++result_offset_index;
+        }
+    }
+    this->resize(result_offset_index);
+    chars.resize(offsets[result_offset_index - 1]);
+    return result_offset_index;
+}
+
 ColumnPtr ColumnString::permute(const Permutation& perm, size_t limit) const {
     size_t size = offsets.size();
 

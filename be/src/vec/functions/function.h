@@ -142,6 +142,9 @@ private:
     Status execute_without_low_cardinality_columns2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
                                                    const ColumnNumbers& arguments, size_t result,
                                                    size_t input_rows_count, bool dry_run);
+    Status execute_without_low_cardinality_columns22(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+                                                    const ColumnNumbers& arguments, size_t result,
+                                                    size_t input_rows_count, bool dry_run);
 };
 
 /// Function with known arguments and return type.

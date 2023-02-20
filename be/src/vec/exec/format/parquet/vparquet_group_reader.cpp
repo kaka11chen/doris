@@ -121,8 +121,11 @@ Status RowGroupReader::next_batch(Block* block, size_t batch_size, size_t* read_
             RETURN_IF_ERROR(_lazy_read_ctx.vconjunct_ctx->execute(block, &result_column_id));
             clock_gettime(CLOCK_MONOTONIC, &endT);
             fprintf(stderr, "==> conjuct_exec %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+//            clock_gettime(CLOCK_MONOTONIC, &startT);
             ColumnPtr filter_column = block->get_by_position(result_column_id).column;
             RETURN_IF_ERROR(_filter_block(block, filter_column, column_to_keep, columns_to_filter));
+//            clock_gettime(CLOCK_MONOTONIC, &endT);
+//            fprintf(stderr, "==> filter_block %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         } else {
             RETURN_IF_ERROR(_filter_block(block, column_to_keep, columns_to_filter));
         }
@@ -652,8 +655,8 @@ Status RowGroupReader::_filter_block_internal(Block* block,
             std::move(*block->get_by_position(col).column).assume_mutable()->clear();
         }
     } else {
-        //        struct timespec startT, endT;
-        //        clock_gettime(CLOCK_MONOTONIC, &startT);
+        struct timespec startT, endT;
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         for (auto& col : columns_to_filter) {
             size_t size = block->get_by_position(col).column->size();
             if (size != count) {
@@ -671,8 +674,8 @@ Status RowGroupReader::_filter_block_internal(Block* block,
                 }
             }
         }
-        //        clock_gettime(CLOCK_MONOTONIC, &endT);
-        //        fprintf(stderr, "==> filter_block %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> filter_block %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     }
     return Status::OK();
 }

@@ -90,6 +90,78 @@ std::tuple<Block, ColumnNumbers> create_block_with_nested_columns(const Block& b
     return {res, res_args};
 }
 
+void test(const ColumnsWithTypeAndName& columns_with_type_and_name,
+                                                                                    const ColumnNumbers& args,
+                                                                                    const bool need_check_same) {
+    struct timespec startT, endT;
+    clock_gettime(CLOCK_MONOTONIC, &startT);
+    ColumnsWithTypeAndName res;
+    ColumnNumbers res_args(args.size());
+
+    // only build temp block by args column, if args[i] == args[j]
+    // just keep one
+    for (size_t i = 0; i < args.size(); ++i) {
+        bool is_in_res = false;
+        size_t pre_loc = 0;
+
+        if (need_check_same) {
+            for (int j = 0; j < i; ++j) {
+                if (args[j] == args[i]) {
+                    is_in_res = true;
+                    pre_loc = res_args[j];
+                    break;
+                }
+            }
+        }
+
+        if (!is_in_res) {
+            const auto& col = columns_with_type_and_name[args[i]];
+            if (col.type->is_nullable()) {
+                const DataTypePtr& nested_type =
+                        static_cast<const DataTypeNullable&>(*col.type).get_nested_type();
+
+                //                if (!col.column) {
+                //                    res.emplace_back(ColumnWithTypeAndName{nullptr, nested_type, col.name});
+                //                } else if (auto* nullable = check_and_get_column<ColumnNullable>(*col.column)) {
+                //                    const auto& nested_col = nullable->get_nested_column_ptr();
+                //                    res.emplace_back(ColumnWithTypeAndName{nested_col, nested_type, col.name});
+                //                } else if (auto* const_column = check_and_get_column<ColumnConst>(*col.column)) {
+                //                    const auto& nested_col =
+                //                            check_and_get_column<ColumnNullable>(const_column->get_data_column())
+                //                                    ->get_nested_column_ptr();
+                //                    res.emplace_back(ColumnWithTypeAndName{ColumnConst::create(nested_col, col.column->size()), nested_type,
+                //                                col.name});
+                //                } else {
+                //                    LOG(FATAL) << "Illegal column for DataTypeNullable";
+                //                }
+                //                clock_gettime(CLOCK_MONOTONIC, &startT);
+                auto* nullable = (const ColumnNullable* )(col.column.get());
+                const auto& nested_col = nullable->get_nested_column_ptr();
+//                ColumnWithTypeAndName{nested_col, nested_type, col.name};
+                res.emplace_back(ColumnWithTypeAndName{nested_col, nested_type, col.name});
+                //                clock_gettime(CLOCK_MONOTONIC, &endT);
+                //                fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+            } else {
+                res.emplace_back(col);
+            }
+
+            res_args[i] = res.size() - 1;
+        } else {
+            res_args[i] = pre_loc;
+        }
+    }
+
+    // TODO: only support match function, rethink the logic
+//    for (const auto& ctn : columns_with_type_and_name) {
+//        if (ctn.name.size() > BeConsts::BLOCK_TEMP_COLUMN_PREFIX.size() &&
+//            starts_with(ctn.name, BeConsts::BLOCK_TEMP_COLUMN_PREFIX)) {
+////            res.emplace_back(ctn);
+//        }
+//    }
+    clock_gettime(CLOCK_MONOTONIC, &endT);
+    fprintf(stderr, "==> test %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+}
+
 std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_columns2(const ColumnsWithTypeAndName& columns_with_type_and_name,
                                                                   const ColumnNumbers& args,
                                                                   const bool need_check_same) {
@@ -158,8 +230,9 @@ std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_colum
         }
     }
 //    clock_gettime(CLOCK_MONOTONIC, &endT);
-//    fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
-    return {res, res_args};
+//    fprintf(stderr, "==> create_block_with_nested_columns2 inner %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    test(columns_with_type_and_name, args, need_check_same);
+    return {std::move(res), std::move(res_args)};
 }
 
 std::tuple<Block, ColumnNumbers, size_t> create_block_with_nested_columns(const Block& block,
@@ -177,7 +250,7 @@ std::tuple<ColumnsWithTypeAndName, ColumnNumbers, size_t> create_block_with_nest
     auto [res, res_args] = create_block_with_nested_columns2(columns_with_type_and_name, args, true);
     // insert result column in temp block
     res.emplace_back(columns_with_type_and_name[result]);
-    return {res, res_args, res.size() - 1};
+    return {std::move(res), std::move(res_args), res.size() - 1};
 }
 
 void validate_argument_type(const IFunction& func, const DataTypes& arguments,

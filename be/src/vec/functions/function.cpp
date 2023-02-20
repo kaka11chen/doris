@@ -134,9 +134,9 @@ ColumnPtr wrap_in_nullable2(const ColumnPtr& src, const ColumnsWithTypeAndName& 
 //                                  result_null_map_column);
     if (src->only_null())
         return src;
-    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
-        src_not_nullable = nullable->get_nested_column_ptr();
-    }
+//    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
+//        src_not_nullable = nullable->get_nested_column_ptr();
+//    }
     return src_not_nullable->convert_to_full_column_if_const();
 }
 
@@ -399,24 +399,26 @@ Status PreparedFunctionImpl::default_implementation_for_nulls2(
         *executed = true;
         return Status::OK();
     }
-//    struct timespec startT, endT;
+    struct timespec startT, endT;
     if (null_presence.has_nullable) {
 //        clock_gettime(CLOCK_MONOTONIC, &startT);
-        auto [temporary_cols, new_args, new_result] =
-                create_block_with_nested_columns2(columns_with_type_and_name, args, result);
+//        auto [temporary_cols, new_args, new_result] =
+//                create_block_with_nested_columns2(columns_with_type_and_name, args, result);
 //        clock_gettime(CLOCK_MONOTONIC, &endT);
 //        fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
 //        clock_gettime(CLOCK_MONOTONIC, &startT);
-        RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
-                context, temporary_cols, new_args, new_result, temporary_cols.front().column->size(), dry_run));
+//        RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
+//                context, temporary_cols, new_args, new_result, temporary_cols.front().column->size(), dry_run));
+        RETURN_IF_ERROR(execute_without_low_cardinality_columns22(
+                context, columns_with_type_and_name, args, result, columns_with_type_and_name.front().column->size(), dry_run));
 //        clock_gettime(CLOCK_MONOTONIC, &endT);
-//        fprintf(stderr, "==> execute_without_low_cardinality_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
-//        clock_gettime(CLOCK_MONOTONIC, &startT);
+//        fprintf(stderr, "==> execute_without_low_cardinality_columns22 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         columns_with_type_and_name[result].column =
-                wrap_in_nullable2(temporary_cols[new_result].column, columns_with_type_and_name, args,
+                wrap_in_nullable2(columns_with_type_and_name[result].column, columns_with_type_and_name, args,
                                  result, input_rows_count);
-//        clock_gettime(CLOCK_MONOTONIC, &endT);
-//        fprintf(stderr, "==> wrap_in_nullable2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> wrap_in_nullable2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
 //        clock_gettime(CLOCK_MONOTONIC, &endT);
 //        fprintf(stderr, "==> default_implementation_for_nulls2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         *executed = true;
@@ -450,21 +452,43 @@ Status PreparedFunctionImpl::execute_without_low_cardinality_columns(
 Status PreparedFunctionImpl::execute_without_low_cardinality_columns2(
         FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
         size_t input_rows_count, bool dry_run) {
-//    struct timespec startT, endT;
-//    clock_gettime(CLOCK_MONOTONIC, &startT);
     bool executed = false;
     RETURN_IF_ERROR(default_implementation_for_constant_arguments2(
             context, columns_with_type_and_name, args, result, input_rows_count, dry_run, &executed));
     if (executed) {
         return Status::OK();
     }
-//    clock_gettime(CLOCK_MONOTONIC, &endT);
-//    fprintf(stderr, "==> execute_without_low_cardinality_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     RETURN_IF_ERROR(default_implementation_for_nulls2(context, columns_with_type_and_name, args, result, input_rows_count,
                                                      dry_run, &executed));
     if (executed) {
         return Status::OK();
     }
+
+//    if (dry_run)
+//        return execute_impl_dry_run2(context, columns_with_type_and_name, args, result, input_rows_count);
+//    else
+//        return execute_impl2(context, columns_with_type_and_name, args, result, input_rows_count);
+    return Status::OK();
+}
+
+Status PreparedFunctionImpl::execute_without_low_cardinality_columns22(
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
+        size_t input_rows_count, bool dry_run) {
+    //    struct timespec startT, endT;
+    //    clock_gettime(CLOCK_MONOTONIC, &startT);
+    //    bool executed = false;
+    //    RETURN_IF_ERROR(default_implementation_for_constant_arguments2(
+    //            context, columns_with_type_and_name, args, result, input_rows_count, dry_run, &executed));
+    //    if (executed) {
+    //        return Status::OK();
+    //    }
+    //    clock_gettime(CLOCK_MONOTONIC, &endT);
+    //    fprintf(stderr, "==> execute_without_low_cardinality_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    //    RETURN_IF_ERROR(default_implementation_for_nulls2(context, columns_with_type_and_name, args, result, input_rows_count,
+    //                                                     dry_run, &executed));
+    //    if (executed) {
+    //        return Status::OK();
+    //    }
 
     if (dry_run)
         return execute_impl_dry_run2(context, columns_with_type_and_name, args, result, input_rows_count);
@@ -497,6 +521,7 @@ Status PreparedFunctionImpl::execute(FunctionContext* context, Block& block,
 Status PreparedFunctionImpl::execute2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
                                      const ColumnNumbers& args, size_t result,
                                      size_t input_rows_count, bool dry_run) {
+//    fprintf(stderr, "execute2\n");
     //    if (use_default_implementation_for_low_cardinality_columns()) {
     //        auto& res = block.safe_get_by_position(result);
     //        Block block_without_low_cardinality = block.clone_without_columns();

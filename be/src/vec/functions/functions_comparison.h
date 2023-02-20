@@ -619,13 +619,34 @@ public:
 
     Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) override {
-//        struct timespec startT, endT;
-//        clock_gettime(CLOCK_MONOTONIC, &startT);
+        struct timespec startT, endT;
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         const auto& col_with_type_and_name_left = columns_with_type_and_name[arguments[0]];
         const auto& col_with_type_and_name_right = columns_with_type_and_name[arguments[1]];
-        const IColumn* col_left_untyped = col_with_type_and_name_left.column.get();
-        const IColumn* col_right_untyped = col_with_type_and_name_right.column.get();
 
+        const IColumn* col_left_untyped;
+        if (col_with_type_and_name_left.type->is_nullable()) {
+            auto* col_nullable_left =
+                    (const ColumnNullable*)(col_with_type_and_name_left.column.get());
+            col_left_untyped = col_nullable_left->get_nested_column_ptr().get();
+        } else {
+            col_left_untyped = col_with_type_and_name_left.column.get();
+        }
+        const IColumn* col_right_untyped;
+        if (col_with_type_and_name_right.type->is_nullable()) {
+            auto* col_nullable_right =
+                    (const ColumnNullable*)(col_with_type_and_name_right.column.get());
+            col_right_untyped = col_nullable_right->get_nested_column_ptr().get();
+        } else {
+            col_right_untyped = col_with_type_and_name_right.column.get();
+        }
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> get_data_column_of_nullable %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+
+//        const IColumn* col_left_untyped = col_with_type_and_name_left.column.get();
+//        const IColumn* col_right_untyped = col_with_type_and_name_right.column.get();
+
+        clock_gettime(CLOCK_MONOTONIC, &startT);
         const DataTypePtr& left_type = col_with_type_and_name_left.type;
         const DataTypePtr& right_type = col_with_type_and_name_right.type;
 
@@ -691,8 +712,8 @@ public:
 //                                            col_left_untyped->get_name(), get_name());
             execute_num_left_type_test2(columns_with_type_and_name, result, col_left_untyped,
                                                                         col_right_untyped);
-//            clock_gettime(CLOCK_MONOTONIC, &endT);
-//            fprintf(stderr, "==> executeImpl %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+            clock_gettime(CLOCK_MONOTONIC, &endT);
+            fprintf(stderr, "==> executeImpl %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         } else if (is_decimal_v2(left_type) || is_decimal_v2(right_type)) {
             if (!allow_decimal_comparison(left_type, right_type)) {
                 return Status::RuntimeError("No operation {} between {} and {}", get_name(),

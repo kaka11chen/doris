@@ -112,9 +112,9 @@ doris::Status VectorizedFnCall::execute(VExprContext* context, doris::vectorized
 //                                       num_columns_without_result, block->rows(), false));
     RETURN_IF_ERROR(_function->execute2(context->fn_context(_fn_context_index), *block->get_data(), arguments,
                                        num_columns_without_result, block->rows(), false));
-    block->replace_by_position(num_columns_without_result,
-                               ColumnNullable::create(block->get_by_position(num_columns_without_result).column,
-                                                      ColumnUInt8::create(block->rows(), 0)));
+//    block->replace_by_position(num_columns_without_result,
+//                               ColumnNullable::create(block->get_by_position(num_columns_without_result).column,
+//                                                      ColumnUInt8::create(block->rows(), 0)));
     *result_column_id = num_columns_without_result;
     return Status::OK();
 }

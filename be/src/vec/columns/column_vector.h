@@ -326,6 +326,7 @@ public:
 
     ColumnPtr filter(const IColumn::Filter& filt, ssize_t result_size_hint) const override;
     size_t filter(const IColumn::Filter& filter) override;
+    size_t filter_range(const IColumn::Filter& filter, size_t from, size_t to) override;
 
     // note(wb) this method is only used in storage layer now
     Status filter_by_selector(const uint16_t* sel, size_t sel_size, IColumn* col_ptr) override {

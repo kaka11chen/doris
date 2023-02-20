@@ -164,6 +164,8 @@ public:
 
     size_t filter(const Filter& filter) override;
 
+    size_t filter_range(const Filter& filt, size_t from, size_t to) override;
+
     Status filter_by_selector(const uint16_t* sel, size_t sel_size, IColumn* col_ptr) override;
     ColumnPtr permute(const Permutation& perm, size_t limit) const override;
     //    ColumnPtr index(const IColumn & indexes, size_t limit) const override;

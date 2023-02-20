@@ -420,6 +420,7 @@ public:
 
     ColumnPtr filter(const Filter& filt, ssize_t result_size_hint) const override;
     size_t filter(const Filter& filter) override;
+    size_t filter_range(const IColumn::Filter& filter, size_t from, size_t to) override;
 
     ColumnPtr permute(const Permutation& perm, size_t limit) const override;
 
