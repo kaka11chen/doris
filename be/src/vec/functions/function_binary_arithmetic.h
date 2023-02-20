@@ -869,6 +869,78 @@ public:
 
         return Status::OK();
     }
+
+    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName & columns_with_type_and_name, const ColumnNumbers& arguments,
+                        size_t result, size_t input_rows_count) override {
+        auto* left_generic = columns_with_type_and_name[arguments[0]].type.get();
+        auto* right_generic = columns_with_type_and_name[arguments[1]].type.get();
+        auto* result_generic = columns_with_type_and_name[result].type.get();
+        if (left_generic->is_nullable()) {
+            left_generic =
+                    static_cast<const DataTypeNullable*>(left_generic)->get_nested_type().get();
+        }
+        if (right_generic->is_nullable()) {
+            right_generic =
+                    static_cast<const DataTypeNullable*>(right_generic)->get_nested_type().get();
+        }
+        bool result_is_nullable = context->impl()->check_overflow_for_decimal();
+        if (result_generic->is_nullable()) {
+            result_generic =
+                    static_cast<const DataTypeNullable*>(result_generic)->get_nested_type().get();
+        }
+
+        bool valid = cast_both_types(
+                left_generic, right_generic, result_generic,
+                [&](const auto& left, const auto& right, const auto& res) {
+                    using LeftDataType = std::decay_t<decltype(left)>;
+                    using RightDataType = std::decay_t<decltype(right)>;
+                    using ExpectedResultDataType = std::decay_t<decltype(res)>;
+                    using ResultDataType =
+                            typename BinaryOperationTraits<Operation, LeftDataType,
+                                                           RightDataType>::ResultDataType;
+                    if constexpr (
+                            !std::is_same_v<ResultDataType, InvalidType> &&
+                            (IsDataTypeDecimal<ExpectedResultDataType> ==
+                             IsDataTypeDecimal<
+                                     ResultDataType>)&&(IsDataTypeDecimal<ExpectedResultDataType> ==
+                                                        (IsDataTypeDecimal<LeftDataType> ||
+                                                         IsDataTypeDecimal<RightDataType>))) {
+                        if (result_is_nullable) {
+                            auto column_result = ConstOrVectorAdapter<
+                                    LeftDataType, RightDataType,
+                                    std::conditional_t<IsDataTypeDecimal<ExpectedResultDataType>,
+                                                       ExpectedResultDataType, ResultDataType>,
+                                    Operation, is_to_null_type,
+                                    true>::execute(columns_with_type_and_name[arguments[0]].column,
+                                                   columns_with_type_and_name[arguments[1]].column, left,
+                                                   right,
+                                                   remove_nullable(
+                                                           columns_with_type_and_name[result].type));
+                            columns_with_type_and_name[result].column = std::move(column_result);
+                        } else {
+                            auto column_result = ConstOrVectorAdapter<
+                                    LeftDataType, RightDataType,
+                                    std::conditional_t<IsDataTypeDecimal<ExpectedResultDataType>,
+                                                       ExpectedResultDataType, ResultDataType>,
+                                    Operation, is_to_null_type,
+                                    false>::execute(columns_with_type_and_name[arguments[0]].column,
+                                                    columns_with_type_and_name[arguments[1]].column,
+                                                    left, right,
+                                                    remove_nullable(
+                                                            columns_with_type_and_name[result].type));
+                            columns_with_type_and_name[result].column = std::move(column_result);
+                        }
+                        return true;
+                    }
+                    return false;
+                });
+        if (!valid) {
+            return Status::RuntimeError("{}'s arguments do not match the expected data types",
+                                        get_name());
+        }
+
+        return Status::OK();
+    }
 };
 
 } // namespace doris::vectorized
