@@ -531,8 +531,12 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
                 .build();
         TupleDescriptor tupleDescriptor = generateTupleDesc(slotList, table, context);
         tupleDescriptor.setTable(table);
-
         SchemaScanNode scanNode = new SchemaScanNode(context.nextPlanNodeId(), tupleDescriptor);
+        context.getRuntimeTranslator().ifPresent(
+                runtimeFilterGenerator -> runtimeFilterGenerator.getTargetOnScanNode(schemaScan.getId()).forEach(
+                    expr -> runtimeFilterGenerator.translateRuntimeFilterTarget(expr, scanNode, context)
+            )
+        );
         scanNode.finalizeForNereids();
         context.getScanNodes().add(scanNode);
         PlanFragment planFragment =
@@ -555,6 +559,11 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
 
         Utils.execWithUncheckedException(fileScanNode::init);
         context.addScanNode(fileScanNode);
+        context.getRuntimeTranslator().ifPresent(
+                runtimeFilterGenerator -> runtimeFilterGenerator.getTargetOnScanNode(fileScan.getId()).forEach(
+                    expr -> runtimeFilterGenerator.translateRuntimeFilterTarget(expr, fileScanNode, context)
+            )
+        );
         Utils.execWithUncheckedException(fileScanNode::finalizeForNerieds);
         // Create PlanFragment
         DataPartition dataPartition = DataPartition.RANDOM;
@@ -570,6 +579,11 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
 
         TableValuedFunctionIf catalogFunction = tvfRelation.getFunction().getCatalogFunction();
         ScanNode scanNode = catalogFunction.getScanNode(context.nextPlanNodeId(), tupleDescriptor);
+        context.getRuntimeTranslator().ifPresent(
+                runtimeFilterGenerator -> runtimeFilterGenerator.getTargetOnScanNode(tvfRelation.getId()).forEach(
+                    expr -> runtimeFilterGenerator.translateRuntimeFilterTarget(expr, scanNode, context)
+            )
+        );
         scanNode.finalizeForNereids();
         context.addScanNode(scanNode);
 

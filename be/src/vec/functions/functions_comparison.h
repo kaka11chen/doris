@@ -221,22 +221,22 @@ private:
         return false;
     }
 
-    bool execute_num_right_type_test(Block& block, size_t result, const ColumnVector<Int64>* col_left,
+    bool execute_num_right_type_test(Block& block, size_t result, const ColumnVector<UInt64>* col_left,
                                 const IColumn* col_right_untyped) {
         const ColumnConst *col_right = down_cast<const ColumnConst*>(col_right_untyped);
         auto col_res = ColumnUInt8::create();
 
         ColumnUInt8::Container& vec_res = col_res->get_data();
         vec_res.resize(col_left->size());
-        NumComparisonImpl<Int64, Int64, Op<Int64, Int64>>::vector_constant(
-                col_left->get_data(), col_right->template get_value<Int64>(), vec_res);
+        NumComparisonImpl<UInt64, UInt64, Op<UInt64, UInt64>>::vector_constant(
+                col_left->get_data(), col_right->template get_value<UInt64>(), vec_res);
 
         block.replace_by_position(result, std::move(col_res));
         return true;
     }
 
     bool execute_num_right_type_test2(ColumnsWithTypeAndName& columns_with_type_and_name, size_t result,
-                                     const ColumnVector<Int64>* col_left,
+                                     const ColumnVector<UInt64>* col_left,
                                      const IColumn* col_right_untyped) {
 //        struct timespec startT, endT;
         const ColumnConst *col_right = down_cast<const ColumnConst*>(col_right_untyped);
@@ -247,8 +247,8 @@ private:
 
         ColumnUInt8::Container& vec_res = col_res->get_data();
         vec_res.resize(col_left->size());
-        NumComparisonImpl<Int64, Int64, Op<Int64, Int64>>::vector_constant(
-                col_left->get_data(), col_right->template get_value<Int64>(), vec_res);
+        NumComparisonImpl<UInt64, UInt64, Op<UInt64, UInt64>>::vector_constant(
+                col_left->get_data(), col_right->template get_value<UInt64>(), vec_res);
 
         columns_with_type_and_name[result].column = std::move(col_res);
         return true;
@@ -424,7 +424,7 @@ private:
     bool execute_num_left_type_test(Block& block, size_t result, const IColumn* col_left_untyped,
                                const IColumn* col_right_untyped) {
 //        ColumnVector<Int64> *col_left = down_cast<ColumnVector<Int64> *>(col_left_untyped);
-        ColumnVector<Int64> *col_left = (ColumnVector<Int64> *)(col_left_untyped);
+        ColumnVector<UInt64> *col_left = (ColumnVector<UInt64> *)(col_left_untyped);
         execute_num_right_type_test(block, result, col_left, col_right_untyped);
 
         return false;
@@ -433,7 +433,7 @@ private:
     bool execute_num_left_type_test2(ColumnsWithTypeAndName& columns_with_type_and_name, size_t result, const IColumn* col_left_untyped,
                                     const IColumn* col_right_untyped) {
         //        ColumnVector<Int64> *col_left = down_cast<ColumnVector<Int64> *>(col_left_untyped);
-        ColumnVector<Int64> *col_left = (ColumnVector<Int64> *)(col_left_untyped);
+        ColumnVector<UInt64> *col_left = (ColumnVector<UInt64> *)(col_left_untyped);
         execute_num_right_type_test2(columns_with_type_and_name, result, col_left, col_right_untyped);
 
         return false;
@@ -619,8 +619,8 @@ public:
 
     Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) override {
-        struct timespec startT, endT;
-        clock_gettime(CLOCK_MONOTONIC, &startT);
+//        struct timespec startT, endT;
+//        clock_gettime(CLOCK_MONOTONIC, &startT);
         const auto& col_with_type_and_name_left = columns_with_type_and_name[arguments[0]];
         const auto& col_with_type_and_name_right = columns_with_type_and_name[arguments[1]];
 
@@ -640,13 +640,13 @@ public:
         } else {
             col_right_untyped = col_with_type_and_name_right.column.get();
         }
-        clock_gettime(CLOCK_MONOTONIC, &endT);
-        fprintf(stderr, "==> get_data_column_of_nullable %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+//        clock_gettime(CLOCK_MONOTONIC, &endT);
+//        fprintf(stderr, "==> get_data_column_of_nullable %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
 
 //        const IColumn* col_left_untyped = col_with_type_and_name_left.column.get();
 //        const IColumn* col_right_untyped = col_with_type_and_name_right.column.get();
 
-        clock_gettime(CLOCK_MONOTONIC, &startT);
+//        clock_gettime(CLOCK_MONOTONIC, &startT);
         const DataTypePtr& left_type = col_with_type_and_name_left.type;
         const DataTypePtr& right_type = col_with_type_and_name_right.type;
 
@@ -686,34 +686,34 @@ public:
         //                                 which_right.is_date_or_datetime();
 
         if (left_is_num && right_is_num) {
-//            if (!(execute_num_left_type2<UInt8>(columns_with_type_and_name, result, col_left_untyped,
-//                                               col_right_untyped) ||
-//                  execute_num_left_type2<UInt16>(columns_with_type_and_name, result, col_left_untyped,
-//                                                col_right_untyped) ||
-//                  execute_num_left_type2<UInt32>(columns_with_type_and_name, result, col_left_untyped,
-//                                                col_right_untyped) ||
-//                  execute_num_left_type2<UInt64>(columns_with_type_and_name, result, col_left_untyped,
-//                                                col_right_untyped) ||
-//                  execute_num_left_type2<Int8>(columns_with_type_and_name, result, col_left_untyped, col_right_untyped) ||
-//                  execute_num_left_type2<Int16>(columns_with_type_and_name, result, col_left_untyped,
-//                                               col_right_untyped) ||
-//                  execute_num_left_type2<Int32>(columns_with_type_and_name, result, col_left_untyped,
-//                                               col_right_untyped) ||
-//                  execute_num_left_type2<Int64>(columns_with_type_and_name, result, col_left_untyped,
-//                                               col_right_untyped) ||
-//                  execute_num_left_type2<Int128>(columns_with_type_and_name, result, col_left_untyped,
-//                                                col_right_untyped) ||
-//                  execute_num_left_type2<Float32>(columns_with_type_and_name, result, col_left_untyped,
-//                                                 col_right_untyped) ||
-//                  execute_num_left_type2<Float64>(columns_with_type_and_name, result, col_left_untyped,
-//                                                 col_right_untyped)))
-//
-//                return Status::RuntimeError("Illegal column {} of first argument of function {}",
-//                                            col_left_untyped->get_name(), get_name());
-            execute_num_left_type_test2(columns_with_type_and_name, result, col_left_untyped,
-                                                                        col_right_untyped);
-            clock_gettime(CLOCK_MONOTONIC, &endT);
-            fprintf(stderr, "==> executeImpl %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+            if (!(execute_num_left_type2<UInt8>(columns_with_type_and_name, result, col_left_untyped,
+                                               col_right_untyped) ||
+                  execute_num_left_type2<UInt16>(columns_with_type_and_name, result, col_left_untyped,
+                                                col_right_untyped) ||
+                  execute_num_left_type2<UInt32>(columns_with_type_and_name, result, col_left_untyped,
+                                                col_right_untyped) ||
+                  execute_num_left_type2<UInt64>(columns_with_type_and_name, result, col_left_untyped,
+                                                col_right_untyped) ||
+                  execute_num_left_type2<Int8>(columns_with_type_and_name, result, col_left_untyped, col_right_untyped) ||
+                  execute_num_left_type2<Int16>(columns_with_type_and_name, result, col_left_untyped,
+                                               col_right_untyped) ||
+                  execute_num_left_type2<Int32>(columns_with_type_and_name, result, col_left_untyped,
+                                               col_right_untyped) ||
+                  execute_num_left_type2<Int64>(columns_with_type_and_name, result, col_left_untyped,
+                                               col_right_untyped) ||
+                  execute_num_left_type2<Int128>(columns_with_type_and_name, result, col_left_untyped,
+                                                col_right_untyped) ||
+                  execute_num_left_type2<Float32>(columns_with_type_and_name, result, col_left_untyped,
+                                                 col_right_untyped) ||
+                  execute_num_left_type2<Float64>(columns_with_type_and_name, result, col_left_untyped,
+                                                 col_right_untyped)))
+
+                return Status::RuntimeError("Illegal column {} of first argument of function {}",
+                                            col_left_untyped->get_name(), get_name());
+//            execute_num_left_type_test2(columns_with_type_and_name, result, col_left_untyped,
+//                                                                        col_right_untyped);
+//            clock_gettime(CLOCK_MONOTONIC, &endT);
+//            fprintf(stderr, "==> executeImpl %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         } else if (is_decimal_v2(left_type) || is_decimal_v2(right_type)) {
             if (!allow_decimal_comparison(left_type, right_type)) {
                 return Status::RuntimeError("No operation {} between {} and {}", get_name(),
