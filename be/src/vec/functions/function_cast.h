@@ -1056,8 +1056,10 @@ protected:
         return wrapper_function(context, block, new_arguments, result, input_rows_count);
     }
 
-    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
-                        size_t result, size_t input_rows_count) override {
+    Status execute_impl2(FunctionContext* context,
+                         ColumnsWithTypeAndName& columns_with_type_and_name,
+                         const ColumnNumbers& arguments, size_t result,
+                         size_t input_rows_count) override {
         return Status::NotSupported("function not support execute_impl2");
     }
 
@@ -1289,9 +1291,10 @@ public:
                 name);
     }
 
-    PreparedFunctionPtr prepare2(FunctionContext* context, const ColumnsWithTypeAndName & /*sample_block*/,
-                                const ColumnNumbers& /*arguments*/,
-                                size_t /*result*/) const override {
+    PreparedFunctionPtr prepare2(FunctionContext* context,
+                                 const ColumnsWithTypeAndName& /*sample_block*/,
+                                 const ColumnNumbers& /*arguments*/,
+                                 size_t /*result*/) const override {
         return std::make_shared<PreparedFunctionCast>(
                 prepare_unpack_dictionaries(context, get_argument_types()[0], get_return_type()),
                 name);

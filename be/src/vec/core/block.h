@@ -195,9 +195,7 @@ public:
         return data[index].type;
     }
 
-    Container* get_data() {
-        return &data;
-    }
+    Container* get_data() { return &data; }
 
     /// Returns number of rows from first column in block, not equal to nullptr. If no columns, returns 0.
     size_t rows() const;

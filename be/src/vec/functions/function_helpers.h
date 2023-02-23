@@ -96,9 +96,9 @@ std::tuple<Block, ColumnNumbers> create_block_with_nested_columns(const Block& b
 /// Returns the copy of a tmp block and temp args order same as args
 /// in which only args column each column specified in the "arguments"
 /// parameter is replaced with its respective nested column if it is nullable.
-std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_columns2(const ColumnsWithTypeAndName& columns_with_type_and_name,
-                                                                  const ColumnNumbers& args,
-                                                                  const bool need_check_same);
+std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_columns2(
+        const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args,
+        const bool need_check_same);
 
 // Same as above and return the new_res loc in tuple
 std::tuple<Block, ColumnNumbers, size_t> create_block_with_nested_columns(const Block& block,
@@ -106,9 +106,9 @@ std::tuple<Block, ColumnNumbers, size_t> create_block_with_nested_columns(const 
                                                                           size_t result);
 
 // Same as above and return the new_res loc in tuple
-std::tuple<ColumnsWithTypeAndName, ColumnNumbers, size_t> create_block_with_nested_columns2(const ColumnsWithTypeAndName& columns_with_type_and_name,
-                                                                          const ColumnNumbers& args,
-                                                                          size_t result);
+std::tuple<ColumnsWithTypeAndName, ColumnNumbers, size_t> create_block_with_nested_columns2(
+        const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args,
+        size_t result);
 
 /// Checks argument type at specified index with predicate.
 /// throws if there is no argument at specified index or if predicate returns false.

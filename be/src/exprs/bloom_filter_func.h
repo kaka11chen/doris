@@ -229,18 +229,18 @@ struct CommonFindOp {
         return new_size;
     }
 
-    void find_batch(const BloomFilterAdaptor& bloom_filter, const char* __restrict data, const uint8* __restrict nullmap,
-                    int number, uint8* __restrict results) const {
-//        for (int i = 0; i < number; i++) {
-//            results[i] = false;
-//            if (nullmap != nullptr && nullmap[i]) {
-//                continue;
-//            }
-//            if (!bloom_filter.test_element(*((T*)data + i))) {
-//                continue;
-//            }
-//            results[i] = true;
-//        }
+    void find_batch(const BloomFilterAdaptor& bloom_filter, const char* __restrict data,
+                    const uint8* __restrict nullmap, int number, uint8* __restrict results) const {
+        //        for (int i = 0; i < number; i++) {
+        //            results[i] = false;
+        //            if (nullmap != nullptr && nullmap[i]) {
+        //                continue;
+        //            }
+        //            if (!bloom_filter.test_element(*((T*)data + i))) {
+        //                continue;
+        //            }
+        //            results[i] = true;
+        //        }
         if (nullmap) {
             for (int i = 0; i < number; i++) {
                 results[i] = bloom_filter.test_element(*((T*)data + i)) & (!nullmap[i]);

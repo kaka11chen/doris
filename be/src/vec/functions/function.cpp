@@ -34,6 +34,62 @@
 
 namespace doris::vectorized {
 
+ColumnPtr wrap_in_nullable_test(const ColumnPtr& src,
+                                const ColumnsWithTypeAndName& columns_with_type_and_name,
+                                const ColumnNumbers& args, size_t result, size_t input_rows_count) {
+    ColumnPtr result_null_map_column;
+    /// If result is already nullable.
+    ColumnPtr src_not_nullable = src;
+    MutableColumnPtr mutable_result_null_map_column;
+
+    if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
+        src_not_nullable = nullable->get_nested_column_ptr();
+        result_null_map_column = nullable->get_null_map_column_ptr();
+    }
+
+    for (const auto& arg : args) {
+        const ColumnWithTypeAndName& elem = columns_with_type_and_name[arg];
+        if (!elem.column->is_nullable()) continue;
+
+        bool is_const = is_column_const(*elem.column);
+        /// Const Nullable that are NULL.
+        if (is_const && assert_cast<const ColumnConst*>(elem.column.get())->only_null())
+            return columns_with_type_and_name[result].type->create_column_const(input_rows_count,
+                                                                                Null());
+        if (is_const) continue;
+
+        if (auto* nullable = assert_cast<const ColumnNullable*>(elem.column.get())) {
+            const ColumnPtr& null_map_column = nullable->get_null_map_column_ptr();
+            if (!result_null_map_column) {
+                result_null_map_column = null_map_column->clone_resized(input_rows_count);
+            } else {
+                if (!mutable_result_null_map_column)
+                    mutable_result_null_map_column =
+                            (*std::move(result_null_map_column)).assume_mutable();
+
+                NullMap& result_null_map =
+                        assert_cast<ColumnUInt8&>(*mutable_result_null_map_column).get_data();
+                const NullMap& src_null_map =
+                        assert_cast<const ColumnUInt8&>(*null_map_column).get_data();
+
+                VectorizedUtils::update_null_map(result_null_map, src_null_map);
+            }
+        }
+    }
+
+    if (!result_null_map_column) {
+        if (is_column_const(*src)) {
+            return ColumnConst::create(
+                    make_nullable(assert_cast<const ColumnConst&>(*src).get_data_column_ptr(), 0),
+                    input_rows_count);
+        }
+        return ColumnNullable::create(src, ColumnUInt8::create(input_rows_count, 0));
+    }
+
+    return ColumnNullable::create(src_not_nullable->convert_to_full_column_if_const(),
+                                  result_null_map_column);
+}
+
 ColumnPtr wrap_in_nullable(const ColumnPtr& src, const Block& block, const ColumnNumbers& args,
                            size_t result, size_t input_rows_count) {
     ColumnPtr result_null_map_column;
@@ -84,59 +140,59 @@ ColumnPtr wrap_in_nullable(const ColumnPtr& src, const Block& block, const Colum
                                   result_null_map_column);
 }
 
-ColumnPtr wrap_in_nullable2(const ColumnPtr& src, const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args,
-                           size_t result, size_t input_rows_count) {
+ColumnPtr wrap_in_nullable2(const ColumnPtr& src,
+                            const ColumnsWithTypeAndName& columns_with_type_and_name,
+                            const ColumnNumbers& args, size_t result, size_t input_rows_count) {
     ColumnPtr result_null_map_column;
 
     /// If result is already nullable.
     ColumnPtr src_not_nullable = src;
 
-//    if (src->only_null())
-//        return src;
-//    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
-//        src_not_nullable = nullable->get_nested_column_ptr();
-//        result_null_map_column = nullable->get_null_map_column_ptr();
-//    }
-//
-//    for (const auto& arg : args) {
-//        const ColumnWithTypeAndName& elem = columns_with_type_and_name[arg];
-//        if (!elem.type->is_nullable()) continue;
-//
-//        /// Const Nullable that are NULL.
-//        if (elem.column->only_null())
-//            return columns_with_type_and_name[result].type->create_column_const(input_rows_count,
-//                                                                           Null());
-//
-//        if (is_column_const(*elem.column)) continue;
-//
-//        if (auto* nullable = check_and_get_column<ColumnNullable>(*elem.column)) {
-//            const ColumnPtr& null_map_column = nullable->get_null_map_column_ptr();
-//            if (!result_null_map_column) {
-//                result_null_map_column = null_map_column->clone_resized(null_map_column->size());
-//            } else {
-//                MutableColumnPtr mutable_result_null_map_column =
-//                        (*std::move(result_null_map_column)).assume_mutable();
-//
-//                NullMap& result_null_map =
-//                        assert_cast<ColumnUInt8&>(*mutable_result_null_map_column).get_data();
-//                const NullMap& src_null_map =
-//                        assert_cast<const ColumnUInt8&>(*null_map_column).get_data();
-//
-//                VectorizedUtils::update_null_map(result_null_map, src_null_map);
-//                result_null_map_column = std::move(mutable_result_null_map_column);
-//            }
-//        }
-//    }
-//
-//    if (!result_null_map_column) return make_nullable(src);
-//
-//    return ColumnNullable::create(src_not_nullable->convert_to_full_column_if_const(),
-//                                  result_null_map_column);
-    if (src->only_null())
-        return src;
-//    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
-//        src_not_nullable = nullable->get_nested_column_ptr();
-//    }
+    //    if (src->only_null())
+    //        return src;
+    //    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
+    //        src_not_nullable = nullable->get_nested_column_ptr();
+    //        result_null_map_column = nullable->get_null_map_column_ptr();
+    //    }
+    //
+    //    for (const auto& arg : args) {
+    //        const ColumnWithTypeAndName& elem = columns_with_type_and_name[arg];
+    //        if (!elem.type->is_nullable()) continue;
+    //
+    //        /// Const Nullable that are NULL.
+    //        if (elem.column->only_null())
+    //            return columns_with_type_and_name[result].type->create_column_const(input_rows_count,
+    //                                                                           Null());
+    //
+    //        if (is_column_const(*elem.column)) continue;
+    //
+    //        if (auto* nullable = check_and_get_column<ColumnNullable>(*elem.column)) {
+    //            const ColumnPtr& null_map_column = nullable->get_null_map_column_ptr();
+    //            if (!result_null_map_column) {
+    //                result_null_map_column = null_map_column->clone_resized(null_map_column->size());
+    //            } else {
+    //                MutableColumnPtr mutable_result_null_map_column =
+    //                        (*std::move(result_null_map_column)).assume_mutable();
+    //
+    //                NullMap& result_null_map =
+    //                        assert_cast<ColumnUInt8&>(*mutable_result_null_map_column).get_data();
+    //                const NullMap& src_null_map =
+    //                        assert_cast<const ColumnUInt8&>(*null_map_column).get_data();
+    //
+    //                VectorizedUtils::update_null_map(result_null_map, src_null_map);
+    //                result_null_map_column = std::move(mutable_result_null_map_column);
+    //            }
+    //        }
+    //    }
+    //
+    //    if (!result_null_map_column) return make_nullable(src);
+    //
+    //    return ColumnNullable::create(src_not_nullable->convert_to_full_column_if_const(),
+    //                                  result_null_map_column);
+    if (src->only_null()) return src;
+    //    else if (auto* nullable = check_and_get_column<ColumnNullable>(*src)) {
+    //        src_not_nullable = nullable->get_nested_column_ptr();
+    //    }
     return src_not_nullable;
 }
 
@@ -160,7 +216,8 @@ NullPresence get_null_presence(const Block& block, const ColumnNumbers& args) {
     return res;
 }
 
-NullPresence get_null_presence2(const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args) {
+NullPresence get_null_presence2(const ColumnsWithTypeAndName& columns_with_type_and_name,
+                                const ColumnNumbers& args) {
     NullPresence res;
 
     for (const auto& arg : args) {
@@ -184,7 +241,8 @@ NullPresence get_null_presence2(const ColumnsWithTypeAndName& columns_with_type_
     return res;
 }
 
-bool allArgumentsAreConstants2(const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args) {
+bool allArgumentsAreConstants2(const ColumnsWithTypeAndName& columns_with_type_and_name,
+                               const ColumnNumbers& args) {
     for (auto arg : args) {
         if (!is_column_const(*columns_with_type_and_name[arg].column)) {
             return false;
@@ -278,8 +336,9 @@ Status PreparedFunctionImpl::default_implementation_for_constant_arguments(
 }
 
 Status PreparedFunctionImpl::default_implementation_for_constant_arguments2(
-        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
-        size_t input_rows_count, bool dry_run, bool* executed) {
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+        const ColumnNumbers& args, size_t result, size_t input_rows_count, bool dry_run,
+        bool* executed) {
     *executed = false;
     ColumnNumbers arguments_to_remain_constants = get_arguments_that_are_always_constant();
 
@@ -307,12 +366,13 @@ Status PreparedFunctionImpl::default_implementation_for_constant_arguments2(
         if (arguments_to_remain_constants.end() != std::find(arguments_to_remain_constants.begin(),
                                                              arguments_to_remain_constants.end(),
                                                              arg_num)) {
-            temporary_cols.emplace_back(ColumnWithTypeAndName{column.column->clone_resized(1), column.type, column.name});
+            temporary_cols.emplace_back(ColumnWithTypeAndName {column.column->clone_resized(1),
+                                                               column.type, column.name});
         } else {
             have_converted_columns = true;
-            temporary_cols.emplace_back(ColumnWithTypeAndName
-                    {assert_cast<const ColumnConst*>(column.column.get())->get_data_column_ptr(),
-                     column.type, column.name});
+            temporary_cols.emplace_back(ColumnWithTypeAndName {
+                    assert_cast<const ColumnConst*>(column.column.get())->get_data_column_ptr(),
+                    column.type, column.name});
         }
     }
 
@@ -346,7 +406,8 @@ Status PreparedFunctionImpl::default_implementation_for_constant_arguments2(
         result_column = temporary_cols[arguments_size].column;
     }
 
-    columns_with_type_and_name[result].column = ColumnConst::create(result_column, input_rows_count);
+    columns_with_type_and_name[result].column =
+            ColumnConst::create(result_column, input_rows_count);
     *executed = true;
     return Status::OK();
 }
@@ -384,8 +445,9 @@ Status PreparedFunctionImpl::default_implementation_for_nulls(
 }
 
 Status PreparedFunctionImpl::default_implementation_for_nulls2(
-        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
-        size_t input_rows_count, bool dry_run, bool* executed) {
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+        const ColumnNumbers& args, size_t result, size_t input_rows_count, bool dry_run,
+        bool* executed) {
     *executed = false;
     if (args.empty() || !use_default_implementation_for_nulls()) {
         return Status::OK();
@@ -395,35 +457,42 @@ Status PreparedFunctionImpl::default_implementation_for_nulls2(
 
     if (null_presence.has_null_constant) {
         columns_with_type_and_name[result].column =
-                columns_with_type_and_name[result].type->create_column_const(input_rows_count, Null());
+                columns_with_type_and_name[result].type->create_column_const(input_rows_count,
+                                                                             Null());
         *executed = true;
         return Status::OK();
     }
-//    struct timespec startT, endT;
+    struct timespec startT, endT;
     if (null_presence.has_nullable) {
-//        clock_gettime(CLOCK_MONOTONIC, &startT);
-//        auto [temporary_cols, new_args, new_result] =
-//                create_block_with_nested_columns2(columns_with_type_and_name, args, result);
-//        clock_gettime(CLOCK_MONOTONIC, &endT);
-//        fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
-//        clock_gettime(CLOCK_MONOTONIC, &startT);
-//        RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
-//                context, temporary_cols, new_args, new_result, temporary_cols.front().column->size(), dry_run));
+        //        clock_gettime(CLOCK_MONOTONIC, &startT);
+        //        auto [temporary_cols, new_args, new_result] =
+        //                create_block_with_nested_columns2(columns_with_type_and_name, args, result);
+        //        clock_gettime(CLOCK_MONOTONIC, &endT);
+        //        fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        //        clock_gettime(CLOCK_MONOTONIC, &startT);
+        //        RETURN_IF_ERROR(execute_without_low_cardinality_columns2(
+        //                context, temporary_cols, new_args, new_result, temporary_cols.front().column->size(), dry_run));
+        fprintf(stderr, "execute_without_low_cardinality_columns22, function: %s\n", get_name().c_str());
         RETURN_IF_ERROR(execute_without_low_cardinality_columns22(
-                context, columns_with_type_and_name, args, result, columns_with_type_and_name.front().column->size(), dry_run));
-//        clock_gettime(CLOCK_MONOTONIC, &endT);
-//        fprintf(stderr, "==> execute_without_low_cardinality_columns22 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
-//        clock_gettime(CLOCK_MONOTONIC, &startT);
-//        columns_with_type_and_name[result].column =
-//                wrap_in_nullable2(temporary_cols[new_result].column, columns_with_type_and_name, args,
-//                                  result, input_rows_count);
+                context, columns_with_type_and_name, args, result,
+                columns_with_type_and_name.front().column->size(), dry_run));
+        //        clock_gettime(CLOCK_MONOTONIC, &endT);
+        //        fprintf(stderr, "==> execute_without_low_cardinality_columns22 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        clock_gettime(CLOCK_MONOTONIC, &startT);
+        //        columns_with_type_and_name[result].column =
+        //                wrap_in_nullable2(temporary_cols[new_result].column, columns_with_type_and_name, args,
+        //                                  result, input_rows_count);
+        //        columns_with_type_and_name[result].column =
+        //                wrap_in_nullable2(columns_with_type_and_name[result].column, columns_with_type_and_name, args,
+        //                                 result, input_rows_count);
         columns_with_type_and_name[result].column =
-                wrap_in_nullable2(columns_with_type_and_name[result].column, columns_with_type_and_name, args,
-                                 result, input_rows_count);
-//        clock_gettime(CLOCK_MONOTONIC, &endT);
-//        fprintf(stderr, "==> wrap_in_nullable2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
-//        clock_gettime(CLOCK_MONOTONIC, &endT);
-//        fprintf(stderr, "==> default_implementation_for_nulls2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+                wrap_in_nullable2(columns_with_type_and_name[result].column,
+                                  columns_with_type_and_name, args, result, input_rows_count);
+        clock_gettime(CLOCK_MONOTONIC, &endT);
+        fprintf(stderr, "==> wrap_in_nullable2 %lu ns\n",
+                (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+        //        clock_gettime(CLOCK_MONOTONIC, &endT);
+        //        fprintf(stderr, "==> default_implementation_for_nulls2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
         *executed = true;
         return Status::OK();
     }
@@ -453,30 +522,32 @@ Status PreparedFunctionImpl::execute_without_low_cardinality_columns(
 }
 
 Status PreparedFunctionImpl::execute_without_low_cardinality_columns2(
-        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
-        size_t input_rows_count, bool dry_run) {
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+        const ColumnNumbers& args, size_t result, size_t input_rows_count, bool dry_run) {
     bool executed = false;
     RETURN_IF_ERROR(default_implementation_for_constant_arguments2(
-            context, columns_with_type_and_name, args, result, input_rows_count, dry_run, &executed));
+            context, columns_with_type_and_name, args, result, input_rows_count, dry_run,
+            &executed));
     if (executed) {
         return Status::OK();
     }
-    RETURN_IF_ERROR(default_implementation_for_nulls2(context, columns_with_type_and_name, args, result, input_rows_count,
-                                                     dry_run, &executed));
+    RETURN_IF_ERROR(default_implementation_for_nulls2(context, columns_with_type_and_name, args,
+                                                      result, input_rows_count, dry_run,
+                                                      &executed));
     if (executed) {
         return Status::OK();
     }
-
     if (dry_run)
-        return execute_impl_dry_run2(context, columns_with_type_and_name, args, result, input_rows_count);
+        return execute_impl_dry_run2(context, columns_with_type_and_name, args, result,
+                                     input_rows_count);
     else
         return execute_impl2(context, columns_with_type_and_name, args, result, input_rows_count);
     return Status::OK();
 }
 
 Status PreparedFunctionImpl::execute_without_low_cardinality_columns22(
-        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args, size_t result,
-        size_t input_rows_count, bool dry_run) {
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+        const ColumnNumbers& args, size_t result, size_t input_rows_count, bool dry_run) {
     //    struct timespec startT, endT;
     //    clock_gettime(CLOCK_MONOTONIC, &startT);
     //    bool executed = false;
@@ -494,7 +565,8 @@ Status PreparedFunctionImpl::execute_without_low_cardinality_columns22(
     //    }
 
     if (dry_run)
-        return execute_impl_dry_run2(context, columns_with_type_and_name, args, result, input_rows_count);
+        return execute_impl_dry_run2(context, columns_with_type_and_name, args, result,
+                                     input_rows_count);
     else
         return execute_impl2(context, columns_with_type_and_name, args, result, input_rows_count);
 }
@@ -521,10 +593,11 @@ Status PreparedFunctionImpl::execute(FunctionContext* context, Block& block,
                                                    dry_run);
 }
 
-Status PreparedFunctionImpl::execute2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
-                                     const ColumnNumbers& args, size_t result,
-                                     size_t input_rows_count, bool dry_run) {
-//    fprintf(stderr, "execute2\n");
+Status PreparedFunctionImpl::execute2(FunctionContext* context,
+                                      ColumnsWithTypeAndName& columns_with_type_and_name,
+                                      const ColumnNumbers& args, size_t result,
+                                      size_t input_rows_count, bool dry_run) {
+    //    fprintf(stderr, "execute2\n");
     //    if (use_default_implementation_for_low_cardinality_columns()) {
     //        auto& res = block.safe_get_by_position(result);
     //        Block block_without_low_cardinality = block.clone_without_columns();
@@ -541,12 +614,12 @@ Status PreparedFunctionImpl::execute2(FunctionContext* context, ColumnsWithTypeA
     //        }
     //    } else
     Status status;
-//    struct timespec startT, endT;
-//    clock_gettime(CLOCK_MONOTONIC, &startT);
-    status = execute_without_low_cardinality_columns2(context, columns_with_type_and_name, args, result, input_rows_count,
-                                                    dry_run);
-//    clock_gettime(CLOCK_MONOTONIC, &endT);
-//    fprintf(stderr, "==> execute2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    //    struct timespec startT, endT;
+    //    clock_gettime(CLOCK_MONOTONIC, &startT);
+    status = execute_without_low_cardinality_columns2(context, columns_with_type_and_name, args,
+                                                      result, input_rows_count, dry_run);
+    //    clock_gettime(CLOCK_MONOTONIC, &endT);
+    //    fprintf(stderr, "==> execute2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     return status;
 }
 

@@ -125,7 +125,9 @@ static void vector_vector_null(const IColumn* left, const IColumn* right, IColum
 template <class Op>
 static void basic_execute_impl(ColumnRawPtrs arguments, ColumnWithTypeAndName& result_info,
                                size_t input_rows_count) {
+    struct timespec startT, endT;
     auto col_res = ColumnUInt8::create(input_rows_count);
+    clock_gettime(CLOCK_MONOTONIC, &startT);
     if (auto l = check_and_get_column<ColumnConst>(arguments[0])) {
         vector_const<Op>(arguments[1], l, col_res, input_rows_count);
     } else if (auto r = check_and_get_column<ColumnConst>(arguments[1])) {
@@ -133,12 +135,17 @@ static void basic_execute_impl(ColumnRawPtrs arguments, ColumnWithTypeAndName& r
     } else {
         vector_vector<Op>(arguments[0], arguments[1], col_res, input_rows_count);
     }
+    result_info.type = std::make_shared<DataTypeUInt8>();
     result_info.column = std::move(col_res);
+    clock_gettime(CLOCK_MONOTONIC, &endT);
+    fprintf(stderr, "==> logic exe %lu ns\n",
+                        (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
 }
 
 template <class Op>
 static void null_execute_impl(ColumnRawPtrs arguments, ColumnWithTypeAndName& result_info,
                               size_t input_rows_count) {
+//    fprintf(stderr, "null_execute_impl\n");
     auto col_nulls = ColumnUInt8::create(input_rows_count);
     auto col_res = ColumnUInt8::create(input_rows_count);
     if (auto l = check_and_get_column<ColumnConst>(arguments[0])) {
@@ -207,11 +214,10 @@ Status FunctionAnyArityLogical<Impl, Name>::execute_impl(FunctionContext* contex
 }
 
 template <typename Impl, typename Name>
-Status FunctionAnyArityLogical<Impl, Name>::execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
-                                                         const ColumnNumbers& arguments,
-                                                         size_t result_index,
-                                                         size_t input_rows_count) {
-//    fprintf(stderr, "FunctionAnyArityLogical execute_impl2\n");
+Status FunctionAnyArityLogical<Impl, Name>::execute_impl2(
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+        const ColumnNumbers& arguments, size_t result_index, size_t input_rows_count) {
+    //    fprintf(stderr, "FunctionAnyArityLogical execute_impl2\n");
     ColumnRawPtrs args_in;
     for (const auto arg_index : arguments)
         args_in.push_back(columns_with_type_and_name[arg_index].column.get());
@@ -222,9 +228,9 @@ Status FunctionAnyArityLogical<Impl, Name>::execute_impl2(FunctionContext* conte
     } else {
         basic_execute_impl<Impl>(std::move(args_in), result_info, input_rows_count);
     }
+    basic_execute_impl<Impl>(std::move(args_in), result_info, input_rows_count);
     return Status::OK();
 }
-
 
 template <typename A, typename Op>
 struct UnaryOperationImpl {
@@ -266,9 +272,10 @@ bool functionUnaryExecuteType(Block& block, const ColumnNumbers& arguments, size
 }
 
 template <template <typename> class Impl, typename T>
-bool functionUnaryExecuteType2(ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments, size_t result) {
+bool functionUnaryExecuteType2(ColumnsWithTypeAndName& columns_with_type_and_name,
+                               const ColumnNumbers& arguments, size_t result) {
     if (auto col = check_and_get_column<ColumnVector<T>>(
-                           columns_with_type_and_name[arguments[0]].column.get())) {
+                columns_with_type_and_name[arguments[0]].column.get())) {
         auto col_res = ColumnUInt8::create();
 
         typename ColumnUInt8::Container& vec_res = col_res->get_data();
@@ -296,9 +303,9 @@ Status FunctionUnaryLogical<Impl, Name>::execute_impl(FunctionContext* context, 
 }
 
 template <template <typename> class Impl, typename Name>
-Status FunctionUnaryLogical<Impl, Name>::execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
-                                                      const ColumnNumbers& arguments, size_t result,
-                                                      size_t /*input_rows_count*/) {
+Status FunctionUnaryLogical<Impl, Name>::execute_impl2(
+        FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name,
+        const ColumnNumbers& arguments, size_t result, size_t /*input_rows_count*/) {
     if (!functionUnaryExecuteType2<Impl, UInt8>(columns_with_type_and_name, arguments, result)) {
         LOG(FATAL) << fmt::format("Illegal column {} of argument of function {}",
                                   columns_with_type_and_name[arguments[0]].column->get_name(),

@@ -463,7 +463,8 @@ size_t ColumnVector<T>::filter_range(const IColumn::Filter& filter, size_t from,
             // all no hit, pass
         } else if (mask == 0xffffffff) {
             // all hit, copy all
-            memmove(to_filter_data + result_offset, to_filter_data + start_offset, kBatchNums * data_type_size);
+            memmove(to_filter_data + result_offset, to_filter_data + start_offset,
+                    kBatchNums * data_type_size);
             result_offset += kBatchNums;
 
         } else {
@@ -485,7 +486,8 @@ size_t ColumnVector<T>::filter_range(const IColumn::Filter& filter, size_t from,
         if (vmaxvq_u8(filter) == 0) {
             // skip
         } else if (vminvq_u8(filter)) {
-            memmove(to_filter_data + result_offset, to_filter_data + start_offset, kBatchNums * data_type_size);
+            memmove(to_filter_data + result_offset, to_filter_data + start_offset,
+                    kBatchNums * data_type_size);
             result_offset += kBatchNums;
         } else {
             for (int i = 0; i < kBatchNums; ++i) {

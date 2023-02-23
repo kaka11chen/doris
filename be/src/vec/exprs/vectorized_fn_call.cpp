@@ -84,37 +84,38 @@ void VectorizedFnCall::close(doris::RuntimeState* state, VExprContext* context,
 doris::Status VectorizedFnCall::execute(VExprContext* context, doris::vectorized::Block* block,
                                         int* result_column_id) {
     // TODO: not execute const expr again, but use the const column in function context
-//    struct timespec startT, endT;
-//    clock_gettime(CLOCK_MONOTONIC, &startT);
+    //    struct timespec startT, endT;
+    //    clock_gettime(CLOCK_MONOTONIC, &startT);
     doris::vectorized::ColumnNumbers arguments(_children.size());
     for (int i = 0; i < _children.size(); ++i) {
         int column_id = -1;
         RETURN_IF_ERROR(_children[i]->execute(context, block, &column_id));
         arguments[i] = column_id;
     }
-//    clock_gettime(CLOCK_MONOTONIC, &endT);
-//    fprintf(stderr, "==> execute _children %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    //    clock_gettime(CLOCK_MONOTONIC, &endT);
+    //    fprintf(stderr, "==> execute _children %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     // call function
     size_t num_columns_without_result = block->columns();
     // prepare a column to save result
     block->insert({nullptr, _data_type, _expr_name});
-//    if (_can_fast_execute) {
-//        // if not find fast execute result column, means do not need check fast execute again
-//        _can_fast_execute = fast_execute(context->fn_context(_fn_context_index), *block, arguments,
-//                                         num_columns_without_result, block->rows());
-//        if (_can_fast_execute) {
-//            *result_column_id = num_columns_without_result;
-//            return Status::OK();
-//        }
-//    }
+    //    if (_can_fast_execute) {
+    //        // if not find fast execute result column, means do not need check fast execute again
+    //        _can_fast_execute = fast_execute(context->fn_context(_fn_context_index), *block, arguments,
+    //                                         num_columns_without_result, block->rows());
+    //        if (_can_fast_execute) {
+    //            *result_column_id = num_columns_without_result;
+    //            return Status::OK();
+    //        }
+    //    }
 
-//    RETURN_IF_ERROR(_function->execute(context->fn_context(_fn_context_index), *block, arguments,
-//                                       num_columns_without_result, block->rows(), false));
-    RETURN_IF_ERROR(_function->execute2(context->fn_context(_fn_context_index), *block->get_data(), arguments,
-                                       num_columns_without_result, block->rows(), false));
-//    block->replace_by_position(num_columns_without_result,
-//                               ColumnNullable::create(block->get_by_position(num_columns_without_result).column,
-//                                                      ColumnUInt8::create(block->rows(), 0)));
+    //    RETURN_IF_ERROR(_function->execute(context->fn_context(_fn_context_index), *block, arguments,
+    //                                       num_columns_without_result, block->rows(), false));
+    RETURN_IF_ERROR(_function->execute2(context->fn_context(_fn_context_index), *block->get_data(),
+                                        arguments, num_columns_without_result, block->rows(),
+                                        false));
+    //    block->replace_by_position(num_columns_without_result,
+    //                               ColumnNullable::create(block->get_by_position(num_columns_without_result).column,
+    //                                                      ColumnUInt8::create(block->rows(), 0)));
     *result_column_id = num_columns_without_result;
     return Status::OK();
 }

@@ -90,11 +90,11 @@ std::tuple<Block, ColumnNumbers> create_block_with_nested_columns(const Block& b
     return {res, res_args};
 }
 
-std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_columns2(const ColumnsWithTypeAndName& columns_with_type_and_name,
-                                                                  const ColumnNumbers& args,
-                                                                  const bool need_check_same) {
-//    struct timespec startT, endT;
-//    clock_gettime(CLOCK_MONOTONIC, &startT);
+std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_columns2(
+        const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args,
+        const bool need_check_same) {
+    //    struct timespec startT, endT;
+    //    clock_gettime(CLOCK_MONOTONIC, &startT);
     ColumnsWithTypeAndName res;
     ColumnNumbers res_args(args.size());
 
@@ -120,26 +120,26 @@ std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_colum
                 const DataTypePtr& nested_type =
                         static_cast<const DataTypeNullable&>(*col.type).get_nested_type();
 
-//                if (!col.column) {
-//                    res.emplace_back(ColumnWithTypeAndName{nullptr, nested_type, col.name});
-//                } else if (auto* nullable = check_and_get_column<ColumnNullable>(*col.column)) {
-//                    const auto& nested_col = nullable->get_nested_column_ptr();
-//                    res.emplace_back(ColumnWithTypeAndName{nested_col, nested_type, col.name});
-//                } else if (auto* const_column = check_and_get_column<ColumnConst>(*col.column)) {
-//                    const auto& nested_col =
-//                            check_and_get_column<ColumnNullable>(const_column->get_data_column())
-//                                    ->get_nested_column_ptr();
-//                    res.emplace_back(ColumnWithTypeAndName{ColumnConst::create(nested_col, col.column->size()), nested_type,
-//                                col.name});
-//                } else {
-//                    LOG(FATAL) << "Illegal column for DataTypeNullable";
-//                }
-//                clock_gettime(CLOCK_MONOTONIC, &startT);
-                auto* nullable = (const ColumnNullable* )(col.column.get());
+                //                if (!col.column) {
+                //                    res.emplace_back(ColumnWithTypeAndName{nullptr, nested_type, col.name});
+                //                } else if (auto* nullable = check_and_get_column<ColumnNullable>(*col.column)) {
+                //                    const auto& nested_col = nullable->get_nested_column_ptr();
+                //                    res.emplace_back(ColumnWithTypeAndName{nested_col, nested_type, col.name});
+                //                } else if (auto* const_column = check_and_get_column<ColumnConst>(*col.column)) {
+                //                    const auto& nested_col =
+                //                            check_and_get_column<ColumnNullable>(const_column->get_data_column())
+                //                                    ->get_nested_column_ptr();
+                //                    res.emplace_back(ColumnWithTypeAndName{ColumnConst::create(nested_col, col.column->size()), nested_type,
+                //                                col.name});
+                //                } else {
+                //                    LOG(FATAL) << "Illegal column for DataTypeNullable";
+                //                }
+                //                clock_gettime(CLOCK_MONOTONIC, &startT);
+                auto* nullable = (const ColumnNullable*)(col.column.get());
                 const auto& nested_col = nullable->get_nested_column_ptr();
-                res.emplace_back(ColumnWithTypeAndName{nested_col, nested_type, col.name});
-//                clock_gettime(CLOCK_MONOTONIC, &endT);
-//                fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+                res.emplace_back(ColumnWithTypeAndName {nested_col, nested_type, col.name});
+                //                clock_gettime(CLOCK_MONOTONIC, &endT);
+                //                fprintf(stderr, "==> create_block_with_nested_columns2 %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
             } else {
                 res.emplace_back(col);
             }
@@ -157,8 +157,8 @@ std::tuple<ColumnsWithTypeAndName, ColumnNumbers> create_block_with_nested_colum
             res.emplace_back(ctn);
         }
     }
-//    clock_gettime(CLOCK_MONOTONIC, &endT);
-//    fprintf(stderr, "==> create_block_with_nested_columns2 inner %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    //    clock_gettime(CLOCK_MONOTONIC, &endT);
+    //    fprintf(stderr, "==> create_block_with_nested_columns2 inner %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     return {res, res_args};
 }
 
@@ -171,10 +171,11 @@ std::tuple<Block, ColumnNumbers, size_t> create_block_with_nested_columns(const 
     return {res, res_args, res.columns() - 1};
 }
 
-std::tuple<ColumnsWithTypeAndName, ColumnNumbers, size_t> create_block_with_nested_columns2(const ColumnsWithTypeAndName& columns_with_type_and_name,
-                                                                          const ColumnNumbers& args,
-                                                                          size_t result) {
-    auto [res, res_args] = create_block_with_nested_columns2(columns_with_type_and_name, args, true);
+std::tuple<ColumnsWithTypeAndName, ColumnNumbers, size_t> create_block_with_nested_columns2(
+        const ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& args,
+        size_t result) {
+    auto [res, res_args] =
+            create_block_with_nested_columns2(columns_with_type_and_name, args, true);
     // insert result column in temp block
     res.emplace_back(columns_with_type_and_name[result]);
     return {std::move(res), std::move(res_args), res.size() - 1};

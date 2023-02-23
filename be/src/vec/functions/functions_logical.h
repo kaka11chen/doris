@@ -108,8 +108,10 @@ public:
     Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) override;
 
-    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
-                        size_t result, size_t input_rows_count) override;
+    Status execute_impl2(FunctionContext* context,
+                         ColumnsWithTypeAndName& columns_with_type_and_name,
+                         const ColumnNumbers& arguments, size_t result,
+                         size_t input_rows_count) override;
 };
 
 template <template <typename> class Impl, typename Name>
@@ -130,8 +132,10 @@ public:
     Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
                         size_t result, size_t input_rows_count) override;
 
-    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName& columns_with_type_and_name, const ColumnNumbers& arguments,
-                        size_t result, size_t input_rows_count) override;
+    Status execute_impl2(FunctionContext* context,
+                         ColumnsWithTypeAndName& columns_with_type_and_name,
+                         const ColumnNumbers& arguments, size_t result,
+                         size_t input_rows_count) override;
 };
 
 } // namespace FunctionsLogicalDetail

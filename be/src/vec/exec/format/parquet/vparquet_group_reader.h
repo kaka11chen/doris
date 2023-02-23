@@ -140,7 +140,7 @@ private:
             Block* block, size_t rows,
             const std::unordered_map<std::string, VExprContext*>& missing_columns);
     Status _build_pos_delete_filter(size_t read_rows);
-    Status _filter_block(Block* block, const ColumnPtr filter_column, int column_to_keep,
+    Status _filter_block(Block* block, const ColumnPtr& filter_column, int column_to_keep,
                          std::vector<uint32_t> columns_to_filter);
     bool _merge_filter(IColumn::Filter& to_filter, std::vector<FilterContext>& from_filters);
     Status _filter_block(Block* block, int column_to_keep,

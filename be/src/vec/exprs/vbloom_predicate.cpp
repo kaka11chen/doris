@@ -66,7 +66,7 @@ Status VBloomPredicate::execute(VExprContext* context, Block* block, int* result
     res_data_column->resize(sz);
     auto ptr = ((ColumnVector<UInt8>*)res_data_column.get())->get_data().data();
     auto type = WhichDataType(remove_nullable(block->get_by_position(arguments[0]).type));
-//    struct timespec startT, endT;
+    //    struct timespec startT, endT;
     if (type.is_string_or_fixed_string()) {
         for (size_t i = 0; i < sz; i++) {
             auto ele = argument_column->get_data_at(i);
@@ -75,7 +75,7 @@ Status VBloomPredicate::execute(VExprContext* context, Block* block, int* result
         }
     } else if (_be_exec_version > 0 && (type.is_int_or_uint() || type.is_float())) {
         if (argument_column->is_nullable()) {
-//            clock_gettime(CLOCK_MONOTONIC, &startT);
+            //            clock_gettime(CLOCK_MONOTONIC, &startT);
             auto column_nested = reinterpret_cast<const ColumnNullable*>(argument_column.get())
                                          ->get_nested_column_ptr();
             auto column_nullmap = reinterpret_cast<const ColumnNullable*>(argument_column.get())
@@ -99,8 +99,8 @@ Status VBloomPredicate::execute(VExprContext* context, Block* block, int* result
         block->insert({std::move(res_data_column), _data_type, _expr_name});
     }
     *result_column_id = num_columns_without_result;
-//    clock_gettime(CLOCK_MONOTONIC, &endT);
-//    fprintf(stderr, "==> VBloomPredicate::execute %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
+    //    clock_gettime(CLOCK_MONOTONIC, &endT);
+    //    fprintf(stderr, "==> VBloomPredicate::execute %lu ns\n", (endT.tv_sec - startT.tv_sec) * 1000000000 + (endT.tv_nsec - startT.tv_nsec));
     return Status::OK();
 }
 

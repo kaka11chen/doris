@@ -870,8 +870,10 @@ public:
         return Status::OK();
     }
 
-    Status execute_impl2(FunctionContext* context, ColumnsWithTypeAndName & columns_with_type_and_name, const ColumnNumbers& arguments,
-                        size_t result, size_t input_rows_count) override {
+    Status execute_impl2(FunctionContext* context,
+                         ColumnsWithTypeAndName& columns_with_type_and_name,
+                         const ColumnNumbers& arguments, size_t result,
+                         size_t input_rows_count) override {
         auto* left_generic = columns_with_type_and_name[arguments[0]].type.get();
         auto* right_generic = columns_with_type_and_name[arguments[1]].type.get();
         auto* result_generic = columns_with_type_and_name[result].type.get();
@@ -912,10 +914,11 @@ public:
                                                        ExpectedResultDataType, ResultDataType>,
                                     Operation, is_to_null_type,
                                     true>::execute(columns_with_type_and_name[arguments[0]].column,
-                                                   columns_with_type_and_name[arguments[1]].column, left,
-                                                   right,
+                                                   columns_with_type_and_name[arguments[1]].column,
+                                                   left, right,
                                                    remove_nullable(
-                                                           columns_with_type_and_name[result].type));
+                                                           columns_with_type_and_name[result]
+                                                                   .type));
                             columns_with_type_and_name[result].column = std::move(column_result);
                         } else {
                             auto column_result = ConstOrVectorAdapter<
@@ -927,7 +930,8 @@ public:
                                                     columns_with_type_and_name[arguments[1]].column,
                                                     left, right,
                                                     remove_nullable(
-                                                            columns_with_type_and_name[result].type));
+                                                            columns_with_type_and_name[result]
+                                                                    .type));
                             columns_with_type_and_name[result].column = std::move(column_result);
                         }
                         return true;
