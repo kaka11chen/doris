@@ -32,6 +32,11 @@ public:
             init(node);
         }
     }
+    VLiteral(const std::string &expr_name, Int32 value)
+            : _expr_name(expr_name)
+    {
+        _column_ptr = _data_type->create_column_const(1, value);
+    }
     Status execute(VExprContext* context, vectorized::Block* block, int* result_column_id) override;
     const std::string& expr_name() const override { return _expr_name; }
     VExpr* clone(doris::ObjectPool* pool) const override { return pool->add(new VLiteral(*this)); }

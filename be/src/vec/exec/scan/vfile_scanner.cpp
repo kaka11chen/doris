@@ -572,7 +572,7 @@ Status VFileScanner::_get_next_reader() {
         case TFileFormatType::FORMAT_PARQUET: {
             ParquetReader* parquet_reader = new ParquetReader(
                     _profile, _params, range, _state->query_options().batch_size,
-                    const_cast<cctz::time_zone*>(&_state->timezone_obj()), _io_ctx.get());
+                    const_cast<cctz::time_zone*>(&_state->timezone_obj()), _io_ctx.get(), _state);
             RETURN_IF_ERROR(parquet_reader->open());
             if (!_is_load && _push_down_expr == nullptr && _vconjunct_ctx != nullptr) {
                 RETURN_IF_ERROR(_vconjunct_ctx->clone(_state, &_push_down_expr));
@@ -590,7 +590,7 @@ Status VFileScanner::_get_next_reader() {
             } else {
                 std::vector<std::string> place_holder;
                 init_status = parquet_reader->init_reader(_file_col_names, place_holder,
-                                                          _colname_to_value_range, _push_down_expr);
+                                                          _colname_to_value_range, _push_down_expr, true, _real_tuple_desc);
                 _cur_reader.reset((GenericReader*)parquet_reader);
             }
             break;

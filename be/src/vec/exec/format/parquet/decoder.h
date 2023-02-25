@@ -84,6 +84,14 @@ public:
         return Status::NotSupported("set_dict is not supported");
     }
 
+    virtual Status get_dict_values(MutableColumnPtr& doris_column) {
+        return Status::NotSupported("get_dict_values is not supported");
+    }
+
+    virtual Status get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) {
+        return Status::NotSupported("get_dict_codes is not supported");
+    }
+
 protected:
     int32_t _type_length;
     Slice* _data = nullptr;

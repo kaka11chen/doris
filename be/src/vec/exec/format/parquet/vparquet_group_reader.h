@@ -104,11 +104,13 @@ public:
                    const std::vector<ParquetReadColumn>& read_columns, const int32_t row_group_id,
                    const tparquet::RowGroup& row_group, cctz::time_zone* ctz,
                    const PositionDeleteContext& position_delete_ctx,
-                   const LazyReadContext& lazy_read_ctx);
+                   const LazyReadContext& lazy_read_ctx,
+                   RuntimeState* state);
 
     ~RowGroupReader();
     Status init(const FieldDescriptor& schema, std::vector<RowRange>& row_ranges,
-                std::unordered_map<int, tparquet::OffsetIndex>& col_offsets);
+                std::unordered_map<int, tparquet::OffsetIndex>& col_offsets,
+                const TupleDescriptor* tuple_descriptor);
     Status next_batch(Block* block, size_t batch_size, size_t* read_rows, bool* batch_eof);
     int64_t lazy_read_filtered_rows() const { return _lazy_read_filtered_rows; }
 
@@ -139,6 +141,8 @@ private:
     Status _filter_block_internal(Block* block, const vector<uint32_t>& columns_to_filter,
                                   const IColumn::Filter& filter);
 
+    Status _rewrite_dict_predicates();
+
     io::FileReaderSPtr _file_reader;
     std::unordered_map<std::string, std::unique_ptr<ParquetColumnReader>> _column_readers;
     const std::vector<ParquetReadColumn>& _read_columns;
@@ -157,5 +161,8 @@ private:
     std::unique_ptr<TextConverter> _text_converter = nullptr;
     std::unique_ptr<IColumn::Filter> _pos_delete_filter_ptr = nullptr;
     int64_t _total_read_rows = 0;
+    const TupleDescriptor* _tuple_descriptor;
+    VExprContext* _rewritten_conjunct_ctx = nullptr;
+    RuntimeState* _state;
 };
 } // namespace doris::vectorized

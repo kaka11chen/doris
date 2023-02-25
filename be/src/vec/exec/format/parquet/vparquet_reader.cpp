@@ -34,7 +34,7 @@ namespace doris::vectorized {
 
 ParquetReader::ParquetReader(RuntimeProfile* profile, const TFileScanRangeParams& params,
                              const TFileRangeDesc& range, size_t batch_size, cctz::time_zone* ctz,
-                             IOContext* io_ctx)
+                             IOContext* io_ctx, RuntimeState* state)
         : _profile(profile),
           _scan_params(params),
           _scan_range(range),
@@ -42,13 +42,14 @@ ParquetReader::ParquetReader(RuntimeProfile* profile, const TFileScanRangeParams
           _range_start_offset(range.start_offset),
           _range_size(range.size),
           _ctz(ctz),
-          _io_ctx(io_ctx) {
+          _io_ctx(io_ctx),
+          _state(state) {
     _init_profile();
 }
 
 ParquetReader::ParquetReader(const TFileScanRangeParams& params, const TFileRangeDesc& range,
-                             IOContext* io_ctx)
-        : _profile(nullptr), _scan_params(params), _scan_range(range), _io_ctx(io_ctx) {}
+                             IOContext* io_ctx, RuntimeState* state)
+        : _profile(nullptr), _scan_params(params), _scan_range(range), _io_ctx(io_ctx), _state(state) {}
 
 ParquetReader::~ParquetReader() {
     close();
@@ -188,7 +189,10 @@ Status ParquetReader::init_reader(
         const std::vector<std::string>& all_column_names,
         const std::vector<std::string>& missing_column_names,
         std::unordered_map<std::string, ColumnValueRangeType>* colname_to_value_range,
-        VExprContext* vconjunct_ctx, bool filter_groups) {
+        VExprContext* vconjunct_ctx,
+        bool filter_groups,
+        const TupleDescriptor* tuple_descriptor) {
+    _tuple_descriptor = tuple_descriptor;
     if (_file_metadata == nullptr) {
         return Status::InternalError("failed to init parquet reader, please open reader first");
     }
@@ -460,10 +464,10 @@ Status ParquetReader::_next_row_group_reader() {
             _get_position_delete_ctx(row_group, row_group_index);
     _current_group_reader.reset(new RowGroupReader(_file_reader, _read_columns,
                                                    row_group_index.row_group_id, row_group, _ctz,
-                                                   position_delete_ctx, _lazy_read_ctx));
+                                                   position_delete_ctx, _lazy_read_ctx, _state));
     _row_group_eof = false;
     return _current_group_reader->init(_file_metadata->schema(), candidate_row_ranges,
-                                       _col_offsets);
+                                       _col_offsets, _tuple_descriptor);
 }
 
 Status ParquetReader::_init_row_groups(const bool& is_filter_groups) {

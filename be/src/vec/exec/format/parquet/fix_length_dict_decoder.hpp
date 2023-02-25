@@ -151,6 +151,11 @@ public:
         return Status::OK();
     }
 
+//    Status get_dict_values(MutableColumnPtr& doris_column) override {
+//        doris_column->insert_many_strings(&_dict_items[0], _dict_items.size());
+//        return Status::OK();
+//    }
+
 protected:
     template <typename Numeric>
     Status _decode_numeric(MutableColumnPtr& doris_column, ColumnSelectVector& select_vector) {

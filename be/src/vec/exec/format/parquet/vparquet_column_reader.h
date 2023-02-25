@@ -83,6 +83,15 @@ public:
     virtual Status read_column_data(ColumnPtr& doris_column, DataTypePtr& type,
                                     ColumnSelectVector& select_vector, size_t batch_size,
                                     size_t* read_rows, bool* eof) = 0;
+
+    virtual Status get_dict_values(MutableColumnPtr& doris_column) {
+        return Status::NotSupported("get_dict_values is not supported");
+    }
+
+    virtual Status get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) {
+        return Status::NotSupported("get_dict_values is not supported");
+    }
+
     static Status create(io::FileReaderSPtr file, FieldSchema* field,
                          const tparquet::RowGroup& row_group,
                          const std::vector<RowRange>& row_ranges, cctz::time_zone* ctz,
@@ -120,6 +129,8 @@ public:
     Status read_column_data(ColumnPtr& doris_column, DataTypePtr& type,
                             ColumnSelectVector& select_vector, size_t batch_size, size_t* read_rows,
                             bool* eof) override;
+    Status get_dict_values(MutableColumnPtr& doris_column) override;
+    Status get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) override;
     const std::vector<level_t>& get_rep_level() const override { return _rep_levels; }
     const std::vector<level_t>& get_def_level() const override { return _def_levels; }
     Statistics statistics() override {
@@ -141,6 +152,7 @@ private:
     Status _read_nested_column(ColumnPtr& doris_column, DataTypePtr& type,
                                ColumnSelectVector& select_vector, size_t batch_size,
                                size_t* read_rows, bool* eof);
+    Status _try_load_dict_page(bool *loaded);
 };
 
 class ArrayColumnReader : public ParquetColumnReader {

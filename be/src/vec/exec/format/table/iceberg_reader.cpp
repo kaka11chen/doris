@@ -181,7 +181,7 @@ Status IcebergTableReader::_position_delete(
             delete_range.file_size = -1;
             ParquetReader delete_reader(_profile, _params, delete_range, 102400,
                                         const_cast<cctz::time_zone*>(&_state->timezone_obj()),
-                                        _io_ctx);
+                                        _io_ctx, _state);
             if (!init_schema) {
                 delete_reader.get_parsed_schema(&delete_file_col_names, &delete_file_col_types);
                 init_schema = true;

@@ -38,6 +38,7 @@ Status ByteArrayDictDecoder::set_dict(std::unique_ptr<uint8_t[]>& dict, int32_t 
         total_length += l;
     }
 
+    _dict_code_by_value.reserve(num_values);
     // For insert_many_strings_overflow
     _dict_data.resize(total_length + MAX_STRINGS_OVERFLOW_SIZE);
     _max_value_length = 0;
@@ -48,6 +49,7 @@ Status ByteArrayDictDecoder::set_dict(std::unique_ptr<uint8_t[]>& dict, int32_t 
         offset_cursor += 4;
         memcpy(&_dict_data[offset], dict_item_address + offset_cursor, l);
         _dict_items.emplace_back(&_dict_data[offset], l);
+        _dict_code_by_value[StringRef(&_dict_data[offset], l)] = i;
         offset_cursor += l;
         offset += l;
         if (offset_cursor > length) {
@@ -59,6 +61,19 @@ Status ByteArrayDictDecoder::set_dict(std::unique_ptr<uint8_t[]>& dict, int32_t 
     }
     if (offset_cursor != length) {
         return Status::Corruption("Wrong dictionary data for byte array type");
+    }
+    return Status::OK();
+}
+
+Status ByteArrayDictDecoder::get_dict_values(MutableColumnPtr& doris_column) {
+    doris_column->insert_many_strings_overflow(&_dict_items[0], _dict_items.size(), _max_value_length);
+    return Status::OK();
+}
+
+Status ByteArrayDictDecoder::get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) {
+    for (int i = 0; i < columnString->size(); ++i) {
+        StringRef dict_value = columnString->get_data_at(i);
+        dict_codes->emplace_back(_dict_code_by_value[dict_value]);
     }
     return Status::OK();
 }

@@ -142,6 +142,14 @@ public:
         return _statistics;
     }
 
+    Status get_dict_values(MutableColumnPtr& doris_column) {
+        return _decoders[static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)]->get_dict_values(doris_column);
+    }
+
+    Status get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) {
+        return _decoders[static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)]->get_dict_codes(columnString, dict_codes);
+    }
+
 private:
     enum ColumnChunkReaderState { NOT_INIT, INITIALIZED, HEADER_PARSED, DATA_LOADED };
 

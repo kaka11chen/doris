@@ -41,6 +41,8 @@ public:
 
     int column_id() const { return _column_id; }
 
+    void set_column_id(int column_id) { _column_id = column_id; }
+
     int slot_id() const { return _slot_id; }
 
 private:

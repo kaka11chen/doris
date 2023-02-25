@@ -20,6 +20,9 @@
 #include "schema_desc.h"
 #include "util/simd/bits.h"
 #include "vec/columns/column_const.h"
+#include "vec/exprs/vectorized_fn_call.h"
+#include "vec/exprs/vliteral.h"
+#include "vec/exprs/vslot_ref.h"
 #include "vparquet_column_reader.h"
 
 namespace doris::vectorized {
@@ -31,7 +34,8 @@ RowGroupReader::RowGroupReader(io::FileReaderSPtr file_reader,
                                const int32_t row_group_id, const tparquet::RowGroup& row_group,
                                cctz::time_zone* ctz,
                                const PositionDeleteContext& position_delete_ctx,
-                               const LazyReadContext& lazy_read_ctx)
+                               const LazyReadContext& lazy_read_ctx,
+                               RuntimeState* state)
         : _file_reader(file_reader),
           _read_columns(read_columns),
           _row_group_id(row_group_id),
@@ -39,14 +43,19 @@ RowGroupReader::RowGroupReader(io::FileReaderSPtr file_reader,
           _remaining_rows(row_group.num_rows),
           _ctz(ctz),
           _position_delete_ctx(position_delete_ctx),
-          _lazy_read_ctx(lazy_read_ctx) {}
+          _lazy_read_ctx(lazy_read_ctx),
+          _state(state)
+{
+}
 
 RowGroupReader::~RowGroupReader() {
     _column_readers.clear();
 }
 
 Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>& row_ranges,
-                            std::unordered_map<int, tparquet::OffsetIndex>& col_offsets) {
+                            std::unordered_map<int, tparquet::OffsetIndex>& col_offsets,
+                            const TupleDescriptor* tuple_descriptor) {
+    _tuple_descriptor = tuple_descriptor;
     _merge_read_ranges(row_ranges);
     if (_read_columns.empty()) {
         // Query task that only select columns in path.
@@ -71,6 +80,8 @@ Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>
         }
         _column_readers[read_col._file_slot_name] = std::move(reader);
     }
+
+    _rewrite_dict_predicates();
     return Status::OK();
 }
 
@@ -88,10 +99,10 @@ Status RowGroupReader::next_batch(Block* block, size_t batch_size, size_t* read_
         *read_rows = block->rows();
         return st;
     }
-    if (_lazy_read_ctx.can_lazy_read) {
-        // call _do_lazy_read recursively when current batch is skipped
-        return _do_lazy_read(block, batch_size, read_rows, batch_eof);
-    } else {
+//    if (_lazy_read_ctx.can_lazy_read) {
+//        // call _do_lazy_read recursively when current batch is skipped
+//        return _do_lazy_read(block, batch_size, read_rows, batch_eof);
+//    } else {
         ColumnSelectVector run_length_vector;
         RETURN_IF_ERROR(_read_column_data(block, _lazy_read_ctx.all_read_columns, batch_size,
                                           read_rows, batch_eof, run_length_vector));
@@ -114,16 +125,32 @@ Status RowGroupReader::next_batch(Block* block, size_t batch_size, size_t* read_
         }
         if (_lazy_read_ctx.vconjunct_ctx != nullptr) {
             int result_column_id = -1;
-            RETURN_IF_ERROR(_lazy_read_ctx.vconjunct_ctx->execute(block, &result_column_id));
+            if (_rewritten_conjunct_ctx) {
+                RETURN_IF_ERROR(_rewritten_conjunct_ctx->execute(block, &result_column_id));
+            }
+
+//            RETURN_IF_ERROR(_lazy_read_ctx.vconjunct_ctx->execute(block, &result_column_id));
             ColumnPtr& filter_column = block->get_by_position(result_column_id).column;
             RETURN_IF_ERROR(_filter_block(block, filter_column, column_to_keep, columns_to_filter));
+
+            ColumnPtr& column = block->get_by_name("s_region").column;
+            if (auto* nullable_column = check_and_get_column<ColumnNullable>(*column)) {
+                MutableColumnPtr nested_column = nullable_column->get_nested_column_ptr()->assume_mutable();
+                auto* dict_column = typeid_cast<ColumnDictI32*>(nested_column.get());
+                MutableColumnPtr string_column = dict_column->convert_to_string_column_if_dictionary();
+                size_t pos = block->get_position_by_name("s_region");
+
+                block->replace_by_position(pos,
+                                           ColumnNullable::create(
+                                                   std::move(string_column), ColumnUInt8::create(string_column->size(), 0)));
+            }
         } else {
             RETURN_IF_ERROR(_filter_block(block, column_to_keep, columns_to_filter));
         }
 
         *read_rows = block->rows();
         return Status::OK();
-    }
+//    }
 }
 
 void RowGroupReader::_merge_read_ranges(std::vector<RowRange>& row_ranges) {
@@ -139,6 +166,13 @@ Status RowGroupReader::_read_column_data(Block* block, const std::vector<std::st
         auto& column_with_type_and_name = block->get_by_name(read_col);
         auto& column_ptr = column_with_type_and_name.column;
         auto& column_type = column_with_type_and_name.type;
+        // POC
+        MutableColumnPtr dict_column = ColumnDictI32::create();
+        size_t pos = block->get_position_by_name("s_region");
+        block->replace_by_position(pos,
+                                   ColumnNullable::create(
+                                           std::move(dict_column), ColumnUInt8::create(dict_column->size(), 0)));
+
         size_t col_read_rows = 0;
         bool col_eof = false;
         // Should reset _filter_map_index to 0 when reading next column.
@@ -597,6 +631,163 @@ Status RowGroupReader::_filter_block_internal(Block* block,
         }
     }
     return Status::OK();
+}
+
+Status RowGroupReader::_rewrite_dict_predicates() {
+//    for (auto& dict_filter_column_name : _dict_filter_column_names) {
+        Block temp_block;
+        MutableColumnPtr dict_value_column = ColumnString::create();
+        RETURN_IF_ERROR(_column_readers["s_region"]->get_dict_values(dict_value_column));
+        temp_block.insert({std::move(dict_value_column), std::make_shared<DataTypeString>(), ""});
+
+        std::vector<uint32_t> columns_to_filter;
+        int column_to_keep = temp_block.columns();
+        columns_to_filter.resize(column_to_keep);
+        for (uint32_t i = 0; i < column_to_keep; ++i) {
+            columns_to_filter[i] = i;
+        }
+        VSlotRef* slotRef = (VSlotRef *)_lazy_read_ctx.vconjunct_ctx->root()->children()[0];
+        slotRef->set_column_id(0);
+
+        int result_column_id = -1;
+        RETURN_IF_ERROR(_lazy_read_ctx.vconjunct_ctx->execute(&temp_block, &result_column_id));
+        RETURN_IF_ERROR(Block::filter_block(&temp_block, columns_to_filter, result_column_id, column_to_keep));
+
+        // get dict codes
+        std::vector<int32_t> dict_codes;
+        RETURN_IF_ERROR(_column_readers["s_region"]->get_dict_codes(
+                static_cast<const ColumnString *>(temp_block.get_by_position(0).column.get()), &dict_codes));
+        if (dict_codes.size() == 1) {
+            VExpr* root;
+            {
+                TFunction fn;
+                TFunctionName fn_name;
+                fn_name.__set_db_name("");
+                fn_name.__set_function_name("eq");
+                fn.__set_name(fn_name);
+                fn.__set_binary_type(TFunctionBinaryType::BUILTIN);
+                std::vector<TTypeDesc> arg_types;
+                arg_types.push_back(create_type_desc(PrimitiveType::TYPE_INT));
+                arg_types.push_back(create_type_desc(PrimitiveType::TYPE_INT));
+                fn.__set_arg_types(arg_types);
+                fn.__set_ret_type(create_type_desc(PrimitiveType::TYPE_BOOLEAN));
+                fn.__set_has_var_args(false);
+
+                TExprNode texpr_node;
+                texpr_node.__set_type(create_type_desc(PrimitiveType::TYPE_BOOLEAN));
+                texpr_node.__set_node_type(TExprNodeType::BINARY_PRED);
+                texpr_node.__set_opcode(TExprOpcode::EQ);
+                texpr_node.__set_vector_opcode(TExprOpcode::EQ);
+                texpr_node.__set_fn(fn);
+                texpr_node.__set_is_nullable(true);
+                texpr_node.__set_child_type(TPrimitiveType::INT);
+                texpr_node.__set_num_children(2);
+                root = _state->obj_pool()->add(new VectorizedFnCall(texpr_node));
+            }
+            {
+//            TExprNode texpr_node;
+//            texpr_node.__set_node_type(TExprNodeType::SLOT_REF);
+//            texpr_node.__set_type(create_type_desc(TYPE_INT));
+//            texpr_node.__set_num_children(0);
+//            texpr_node.__isset.slot_ref = true;
+//            TSlotRef slot_ref;
+//            slot_ref.__set_slot_id(0);
+//            slot_ref.__set_tuple_id(0);
+//            texpr_node.__set_slot_ref(slot_ref);
+//            texpr_node.__isset.output_column = true;
+//            texpr_node.__set_output_column(0);
+//            VExpr* slot_ref_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
+//                VExpr* slot_ref_expr =  _lazy_read_ctx.vconjunct_ctx->root()[1].clone(_state->obj_pool());
+                int pos = 0;
+                for (SlotDescriptor*slot : _tuple_descriptor->slots()) {
+                    if (slot->col_name() == "s_region") {
+                        break;
+                    }
+                    ++pos;
+                }
+                VExpr* slot_ref_expr = new VSlotRef(_tuple_descriptor->slots()[pos]);
+                root->add_child(slot_ref_expr);
+            }
+
+            {
+                TExprNode texpr_node;
+                texpr_node.__set_node_type(TExprNodeType::INT_LITERAL);
+                texpr_node.__set_type(create_type_desc(TYPE_INT));
+                TIntLiteral int_literal;
+                int_literal.__set_value(dict_codes[0]);
+                texpr_node.__set_int_literal(int_literal);
+                VExpr* literal_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
+                root->add_child(literal_expr);
+            }
+
+//            VExpr* root = new VectorizedFnCall();
+//            int pos;
+//            for (auto& slot : _tuple_descriptor->slots()) {
+//                if (slot->col_name() == "s_region") {
+//                    pos = slot->col_pos();
+//                    break;
+//                }
+//            }
+//            VExpr* left_chid = new VSlotRef(_tuple_descriptor->slots()[pos]);
+//            VExpr* right_chid = new VLiteral("right", dict_codes[0]);
+//            root->add_child(left_chid);
+//            root->add_child(right_chid);
+            _rewritten_conjunct_ctx = new VExprContext(root);
+            RETURN_IF_ERROR(_rewritten_conjunct_ctx->prepare(_state, RowDescriptor(const_cast<TupleDescriptor*>(_tuple_descriptor), true)));
+            RETURN_IF_ERROR(_rewritten_conjunct_ctx->open(_state));
+//
+////            _dict_filter_preds[slot_id] = vectorized::new_column_eq_predicate(get_type_info(kDictCodeFieldType),
+////                                                                              slot_id, std::to_string(dict_codes[0]));
+        } else {
+
+        }
+        return Status::OK();
+//    }
+}
+
+doris::TExprNode _create_literal(const int64_t value) {
+        TExprNode node;
+        TTypeDesc type_desc;
+        TTypeNode type_node;
+        std::vector<TTypeNode> type_nodes;
+        type_nodes.emplace_back();
+        TScalarType scalar_type;
+        scalar_type.__set_precision(27);
+        scalar_type.__set_scale(9);
+        scalar_type.__set_len(20);
+        scalar_type.__set_type(TPrimitiveType::INT);
+        type_nodes[0].__set_scalar_type(scalar_type);
+        type_desc.__set_types(type_nodes);
+        node.__set_type(type_desc);
+        node.__set_node_type(TExprNodeType::INT_LITERAL);
+        TIntLiteral int_literal;
+        int_literal.__set_value(value);
+        node.__set_int_literal(int_literal);
+        return node;
+}
+
+doris::TExprNode _create_slot_ref(const int64_t value) {
+        TExprNode node;
+
+        TTypeDesc type_desc;
+        TTypeNode type_node;
+        std::vector<TTypeNode> type_nodes;
+        type_nodes.emplace_back();
+        TScalarType scalar_type;
+        scalar_type.__set_precision(27);
+        scalar_type.__set_scale(9);
+        scalar_type.__set_len(20);
+        scalar_type.__set_type(TPrimitiveType::INT);
+        type_nodes[0].__set_scalar_type(scalar_type);
+        type_desc.__set_types(type_nodes);
+
+        node.__set_type(type_desc);
+        node.__set_node_type(TExprNodeType::SLOT_REF);
+
+        TIntLiteral int_literal;
+        int_literal.__set_value(value);
+        node.__set_int_literal(int_literal);
+        return node;
 }
 
 ParquetColumnReader::Statistics RowGroupReader::statistics() {
