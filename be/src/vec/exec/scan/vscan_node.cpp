@@ -529,6 +529,7 @@ Status VScanNode::_normalize_predicate(VExpr* conjunct_expr_root, VExpr** output
                                 value_range.mark_runtime_filter_predicate(
                                         is_runtimer_filter_predicate);
                             }};
+                            cur_expr
                             RETURN_IF_PUSH_DOWN(_normalize_in_and_eq_predicate(
                                     cur_expr, *(_vconjunct_ctx_ptr.get()), slot, value_range,
                                     &pdt));
@@ -1219,6 +1220,76 @@ Status VScanNode::_change_value_range(ColumnValueRange<PrimitiveType>& temp_rang
 
     return Status::OK();
 }
+
+template <bool IsFixed, PrimitiveType PrimitiveType, typename ChangeFixedValueRangeFunc>
+Status VScanNode::_change_value_range2(ColumnValueRange<PrimitiveType>& temp_range, void* value,
+                                      const ChangeFixedValueRangeFunc& func,
+                                      const std::string& fn_name, int slot_ref_child) {
+    if constexpr (PrimitiveType == TYPE_DATE) {
+        DateTimeValue date_value;
+        reinterpret_cast<VecDateTimeValue*>(value)->convert_vec_dt_to_dt(&date_value);
+        if constexpr (IsFixed) {
+            if (!date_value.check_loss_accuracy_cast_to_date()) {
+                func(temp_range,
+                     reinterpret_cast<typename PrimitiveTypeTraits<PrimitiveType>::CppType*>(
+                             &date_value));
+            }
+        } else {
+            if (date_value.check_loss_accuracy_cast_to_date()) {
+                if (fn_name == "lt" || fn_name == "ge") {
+                    ++date_value;
+                }
+            }
+            func(temp_range, to_olap_filter_type(fn_name, slot_ref_child),
+                 reinterpret_cast<typename PrimitiveTypeTraits<PrimitiveType>::CppType*>(
+                         &date_value));
+        }
+    } else if constexpr (PrimitiveType == TYPE_DATETIME) {
+        DateTimeValue date_value;
+        reinterpret_cast<VecDateTimeValue*>(value)->convert_vec_dt_to_dt(&date_value);
+        if constexpr (IsFixed) {
+            func(temp_range,
+                 reinterpret_cast<typename PrimitiveTypeTraits<PrimitiveType>::CppType*>(
+                         &date_value));
+        } else {
+            func(temp_range, to_olap_filter_type(fn_name, slot_ref_child),
+                 reinterpret_cast<typename PrimitiveTypeTraits<PrimitiveType>::CppType*>(
+                         reinterpret_cast<char*>(&date_value)));
+        }
+    } else if constexpr ((PrimitiveType == TYPE_DECIMALV2) || (PrimitiveType == TYPE_CHAR) ||
+                         (PrimitiveType == TYPE_VARCHAR) || (PrimitiveType == TYPE_HLL) ||
+                         (PrimitiveType == TYPE_DATETIMEV2) || (PrimitiveType == TYPE_TINYINT) ||
+                         (PrimitiveType == TYPE_SMALLINT) || (PrimitiveType == TYPE_INT) ||
+                         (PrimitiveType == TYPE_BIGINT) || (PrimitiveType == TYPE_LARGEINT) ||
+                         (PrimitiveType == TYPE_DECIMAL32) || (PrimitiveType == TYPE_DECIMAL64) ||
+                         (PrimitiveType == TYPE_DECIMAL128I) || (PrimitiveType == TYPE_STRING) ||
+                         (PrimitiveType == TYPE_BOOLEAN) || (PrimitiveType == TYPE_DATEV2)) {
+        if constexpr (IsFixed) {
+            func(temp_range,
+                 reinterpret_cast<typename PrimitiveTypeTraits<PrimitiveType>::CppType*>(value));
+        } else {
+            func(temp_range, to_olap_filter_type(fn_name, slot_ref_child),
+                 reinterpret_cast<typename PrimitiveTypeTraits<PrimitiveType>::CppType*>(value));
+        }
+    } else {
+        static_assert(always_false_v<PrimitiveType>);
+    }
+
+    return Status::OK();
+}
+
+static void add_fixed_value_range(ColumnValueRange<primitive_type>& range, CppType* value) {
+    range.add_fixed_value(*value);
+}
+
+TExprNode texpr_node;
+texpr_node.__set_node_type(TExprNodeType::INT_LITERAL);
+texpr_node.__set_type(create_type_desc(TYPE_INT));
+TIntLiteral int_literal;
+int_literal.__set_value(dict_codes[0]);
+texpr_node.__set_int_literal(int_literal);
+VExpr* literal_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
+root->add_child(literal_expr);
 
 Status VScanNode::try_append_late_arrival_runtime_filter(int* arrived_rf_num) {
     if (_is_all_rf_applied) {

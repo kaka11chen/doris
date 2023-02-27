@@ -72,12 +72,73 @@ Status NewFileScanNode::_init_profile() {
     return Status::OK();
 }
 
+//Status NewFileScanNode::_process_conjuncts() {
+//    RETURN_IF_ERROR(VScanNode::_process_conjuncts());
+//    if (_eos) {
+//        return Status::OK();
+//    }
+//    // TODO: Push conjuncts down to reader.
+//    return Status::OK();
+//}
+
 Status NewFileScanNode::_process_conjuncts() {
     RETURN_IF_ERROR(VScanNode::_process_conjuncts());
     if (_eos) {
         return Status::OK();
     }
     // TODO: Push conjuncts down to reader.
+    _build_filter_conjuncts();
+    return Status::OK();
+}
+
+Status NewFileScanNode::_build_filter_conjuncts() {
+//    if (!_olap_scan_node.__isset.push_down_agg_type_opt ||
+//        _olap_scan_node.push_down_agg_type_opt == TPushAggOp::NONE) {
+//        const std::vector<std::string>& column_names = _olap_scan_node.key_column_name;
+//        const std::vector<TPrimitiveType::type>& column_types = _olap_scan_node.key_column_type;
+//        DCHECK(column_types.size() == column_names.size());
+
+        for (auto& iter : _slot_id_to_value_range) {
+            std::vector<vectorized::VExprContext* > filter_conjuncts;
+            std::visit([&](auto&& range) {
+                range.to_filter_conjuncts(filter_conjuncts, _output_tuple_desc->slots()[iter.first], _state);
+            }, iter.second.second);
+
+            _slot_id_to_filter_conjuncts.insert({iter.first, filter_conjuncts});
+        }
+
+//        for (auto& iter : _compound_value_ranges) {
+//            std::vector<TCondition> filters;
+//            std::visit(
+//                    [&](auto&& range) {
+//                        if (range.is_in_compound_value_range()) {
+//                            range.to_condition_in_compound(filters);
+//                        } else if (range.is_match_value_range()) {
+//                            range.to_match_condition(filters);
+//                        }
+//                    },
+//                    iter);
+//            for (const auto& filter : filters) {
+//                _compound_filters.push_back(filter);
+//            }
+//        }
+
+        // Append value ranges in "_not_in_value_ranges"
+//        for (auto& range : _not_in_value_ranges) {
+//            std::visit([&](auto&& the_range) { the_range.to_in_condition(_olap_filters, false); },
+//                       range);
+//        }
+//    } else {
+//        _runtime_profile->add_info_string(
+//                "PushDownAggregate",
+//                push_down_agg_to_string(_olap_scan_node.push_down_agg_type_opt));
+//    }
+
+//    if (_state->enable_profile()) {
+//        _runtime_profile->add_info_string("PushDownPredicates",
+//                                          olap_filters_to_string(_olap_filters));
+//    }
+
     return Status::OK();
 }
 
