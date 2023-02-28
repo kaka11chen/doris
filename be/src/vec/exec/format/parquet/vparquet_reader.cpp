@@ -190,9 +190,15 @@ Status ParquetReader::init_reader(
         const std::vector<std::string>& missing_column_names,
         std::unordered_map<std::string, ColumnValueRangeType>* colname_to_value_range,
         VExprContext* vconjunct_ctx,
-        bool filter_groups,
-        const TupleDescriptor* tuple_descriptor) {
+        const TupleDescriptor* tuple_descriptor,
+        std::unordered_map<std::string, int>* colname_to_slot_id,
+        std::vector<VExprContext*>* multi_slot_filter_conjuncts,
+        std::unordered_map<int, std::vector<VExprContext*>>* slot_id_to_filter_conjuncts,
+        bool filter_groups) {
     _tuple_descriptor = tuple_descriptor;
+    _colname_to_slot_id = colname_to_slot_id;
+    _multi_slot_filter_conjuncts = multi_slot_filter_conjuncts;
+    _slot_id_to_filter_conjuncts = slot_id_to_filter_conjuncts;
     if (_file_metadata == nullptr) {
         return Status::InternalError("failed to init parquet reader, please open reader first");
     }
@@ -467,7 +473,8 @@ Status ParquetReader::_next_row_group_reader() {
                                                    position_delete_ctx, _lazy_read_ctx, _state));
     _row_group_eof = false;
     return _current_group_reader->init(_file_metadata->schema(), candidate_row_ranges,
-                                       _col_offsets, _tuple_descriptor);
+                                       _col_offsets, _tuple_descriptor, _colname_to_slot_id,
+                                       _multi_slot_filter_conjuncts, _slot_id_to_filter_conjuncts);
 }
 
 Status ParquetReader::_init_row_groups(const bool& is_filter_groups) {

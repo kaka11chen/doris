@@ -39,13 +39,31 @@ protected:
 
 private:
     VScanner* _create_scanner(const TFileScanRange& scan_range);
+    Status _split_conjuncts();
+    Status _split_conjuncts_internal(VExpr* conjunct_expr_root);
+    void _get_slot_ids(VExpr* expr, std::vector<int> *slot_ids);
     Status _build_filter_conjuncts();
+
+    template<PrimitiveType primitive_type>
+    void to_filter_conjuncts(ColumnValueRange<primitive_type>& column_value_range,
+                                              std::vector<vectorized::VExprContext* >& filter_conjuncts,
+                                              const SlotDescriptor *slot_desc,
+                                              const RuntimeState* state);
+    template<PrimitiveType primitive_type>
+    void to_eq_filter_conjunct(ColumnValueRange<primitive_type>& column_value_range,
+                                                std::vector<vectorized::VExprContext *>& filter_conjuncts,
+                                                const SlotDescriptor *slot_desc,
+                                                const RuntimeState* state,
+                                                bool is_in);
+    template <PrimitiveType primitive_type, class T>
+    vectorized::VExpr* create_literal(T value, int precision, int scale);
 
     std::vector<TScanRangeParams> _scan_ranges;
     KVCache<std::string> _kv_cache;
 
-    std::vector<VExprContext> _filter_conjuncts;
-    std::unordered_map<std::string, std::vector<VExprContext*>> _colname_to_filter_conjuncts;
+    std::vector<VExprContext*> _filter_conjuncts;
+//    std::unordered_map<std::string, std::vector<VExprContext*>> _colname_to_filter_conjuncts;
     std::unordered_map<int, std::vector<VExprContext*>> _slot_id_to_filter_conjuncts;
+    std::vector<VExprContext*> _other_filter_conjuncts;
 };
 } // namespace doris::vectorized

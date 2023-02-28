@@ -110,7 +110,10 @@ public:
     ~RowGroupReader();
     Status init(const FieldDescriptor& schema, std::vector<RowRange>& row_ranges,
                 std::unordered_map<int, tparquet::OffsetIndex>& col_offsets,
-                const TupleDescriptor* tuple_descriptor);
+                const TupleDescriptor* tuple_descriptor,
+                std::unordered_map<std::string, int>* colname_to_slot_id,
+                std::vector<VExprContext*>* multi_slot_filter_conjuncts,
+                std::unordered_map<int, std::vector<VExprContext*>>* slot_id_to_filter_conjuncts);
     Status next_batch(Block* block, size_t batch_size, size_t* read_rows, bool* batch_eof);
     int64_t lazy_read_filtered_rows() const { return _lazy_read_filtered_rows; }
 
@@ -141,7 +144,10 @@ private:
     Status _filter_block_internal(Block* block, const vector<uint32_t>& columns_to_filter,
                                   const IColumn::Filter& filter);
 
+    bool _can_using_dict_filter(const string& predicate_col_name);
     Status _rewrite_dict_predicates();
+    void _set_column_id(VExpr *root);
+    Status _execute_conjuncts(const std::vector<VExprContext*>& ctxs, Block* block, std::vector<uint32_t> &columns_to_filter, int column_to_keep);
 
     io::FileReaderSPtr _file_reader;
     std::unordered_map<std::string, std::unique_ptr<ParquetColumnReader>> _column_readers;
@@ -162,7 +168,14 @@ private:
     std::unique_ptr<IColumn::Filter> _pos_delete_filter_ptr = nullptr;
     int64_t _total_read_rows = 0;
     const TupleDescriptor* _tuple_descriptor;
-    VExprContext* _rewritten_conjunct_ctx = nullptr;
+    std::unordered_map<std::string, int>* _colname_to_slot_id;
+//    std::vector<VExprContext*>* _multi_slot_filter_conjuncts;
+    std::unordered_map<int, std::vector<VExprContext*>>* _slot_id_to_filter_conjuncts;
+    std::vector<VExprContext*> _dict_filter_conjunct;
+//    std::vector<VExprContext*> _dict_filter_conjunct;
+    std::vector<VExprContext*> _filter_conjunct;
+    std::vector<std::string> _dict_filter_col_names;
+//    VExprContext* _rewritten_conjunct_ctx = nullptr;
     RuntimeState* _state;
 };
 } // namespace doris::vectorized

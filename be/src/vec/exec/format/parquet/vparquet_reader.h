@@ -73,8 +73,11 @@ public:
             const std::vector<std::string>& missing_column_names,
             std::unordered_map<std::string, ColumnValueRangeType>* colname_to_value_range,
             VExprContext* vconjunct_ctx,
-            bool filter_groups = true,
-            const TupleDescriptor* tuple_descriptor = nullptr);
+            const TupleDescriptor* tuple_descriptor,
+            std::unordered_map<std::string, int>* colname_to_slot_id,
+            std::vector<VExprContext*>* multi_slot_filter_conjuncts,
+            std::unordered_map<int, std::vector<VExprContext*>>* slot_id_to_filter_conjuncts,
+            bool filter_groups = true);
 
     Status get_next_block(Block* block, size_t* read_rows, bool* eof) override;
 
@@ -203,5 +206,8 @@ private:
     IOContext* _io_ctx;
     RuntimeState* _state;
     const TupleDescriptor* _tuple_descriptor;
+    std::unordered_map<std::string, int>* _colname_to_slot_id;
+    std::vector<VExprContext*>* _multi_slot_filter_conjuncts;
+    std::unordered_map<int, std::vector<VExprContext*>>* _slot_id_to_filter_conjuncts;
 };
 } // namespace doris::vectorized

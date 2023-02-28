@@ -74,7 +74,7 @@ Status IcebergTableReader::init_reader(
     _gen_new_colname_to_value_range();
     parquet_reader->set_table_to_file_col_map(_table_col_to_file_col);
     Status status = parquet_reader->init_reader(_all_required_col_names, _not_in_file_col_names,
-                                                &_new_colname_to_value_range, vconjunct_ctx);
+                                                &_new_colname_to_value_range, vconjunct_ctx, nullptr, nullptr, nullptr, nullptr, true);
     return status;
 }
 
@@ -191,7 +191,7 @@ Status IcebergTableReader::_position_delete(
                 return nullptr;
             }
             create_status = delete_reader.init_reader(delete_file_col_names, _not_in_file_col_names,
-                                                      nullptr, nullptr, false);
+                                                      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false);
             if (!create_status.ok()) {
                 return nullptr;
             }
