@@ -63,15 +63,18 @@ Status PageReader::next_page_header() {
 
     _offset += real_header_size;
     _next_header_offset = _offset + _cur_page_header.compressed_page_size;
+//    fprintf(stderr, "PageReader::next_page_header() set state HEADER_PARSED\n");
     _state = HEADER_PARSED;
     return Status::OK();
 }
 
 Status PageReader::skip_page() {
     if (UNLIKELY(_state != HEADER_PARSED)) {
+//        fprintf(stderr, "Should generate page header first to skip current page\n");
         return Status::IOError("Should generate page header first to skip current page");
     }
     _offset = _next_header_offset;
+//    fprintf(stderr, "PageReader::skip_page() set state INITIALIZED\n");
     _state = INITIALIZED;
     return Status::OK();
 }
@@ -84,6 +87,7 @@ Status PageReader::get_page_data(Slice& slice) {
     RETURN_IF_ERROR(_reader->read_bytes(slice, _offset));
     _offset += slice.size;
     _state = INITIALIZED;
+//    fprintf(stderr, "PageReader::next_page_header() set state INITIALIZED\n");
     return Status::OK();
 }
 

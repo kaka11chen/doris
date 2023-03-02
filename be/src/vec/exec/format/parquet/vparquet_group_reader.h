@@ -148,6 +148,7 @@ private:
     Status _rewrite_dict_predicates();
     void _set_column_id(VExpr *root);
     Status _execute_conjuncts(const std::vector<VExprContext*>& ctxs, Block* block, std::vector<uint32_t> &columns_to_filter, int column_to_keep);
+    Status _execute_conjuncts2(const std::vector<VExprContext*>& ctxs, Block* block, std::vector<uint32_t> &columns_to_filter, int column_to_keep);
 
     io::FileReaderSPtr _file_reader;
     std::unordered_map<std::string, std::unique_ptr<ParquetColumnReader>> _column_readers;
@@ -177,5 +178,8 @@ private:
     std::vector<std::string> _dict_filter_col_names;
 //    VExprContext* _rewritten_conjunct_ctx = nullptr;
     RuntimeState* _state;
+
+    // dict value is empty after conjunct eval, file group can be skipped
+    bool _is_group_filtered = false;
 };
 } // namespace doris::vectorized

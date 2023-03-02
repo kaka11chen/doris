@@ -67,8 +67,12 @@ public:
 
     size_t size() const override { return _codes.size(); }
 
-    [[noreturn]] StringRef get_data_at(size_t n) const override {
-        LOG(FATAL) << "get_data_at not supported in ColumnDictionary";
+//    [[noreturn]] StringRef get_data_at(size_t n) const override {
+//        LOG(FATAL) << "get_data_at not supported in ColumnDictionary";
+//    }
+
+    StringRef get_data_at(size_t n) const override {
+        return StringRef(reinterpret_cast<const char*>(&_codes[n]), sizeof(_codes[n]));
     }
 
     void insert_from(const IColumn& src, size_t n) override {
@@ -391,9 +395,9 @@ public:
     }
 
     MutableColumnPtr convert_to_string_column_if_dictionary() {
-//        if (is_dict_sorted() && !is_dict_code_converted()) {
-//            convert_dict_codes_if_necessary();
-//        }
+        if (is_dict_sorted() && !is_dict_code_converted()) {
+            convert_dict_codes_if_necessary();
+        }
         auto res = ColumnString::create();
         res->reserve(_codes.capacity());
         for (size_t i = 0; i < _codes.size(); ++i) {

@@ -52,6 +52,7 @@ Status ColumnChunkReader::init() {
 }
 
 Status ColumnChunkReader::next_page() {
+//    fprintf(stderr, "ColumnChunkReader::next_page\n");
     if (_state == HEADER_PARSED) {
         return Status::OK();
     }
@@ -70,6 +71,7 @@ Status ColumnChunkReader::next_page() {
         return next_page();
     } else {
         _remaining_num_values = _page_reader->get_page_header()->data_page_header.num_values;
+//        fprintf(stderr, "ColumnChunkReader::next_page() set state HEADER_PARSED\n");
         _state = HEADER_PARSED;
         return Status::OK();
     }
@@ -133,6 +135,7 @@ Status ColumnChunkReader::load_page_data() {
     _page_decoder->set_data(&_page_data);
 
     _state = DATA_LOADED;
+//    fprintf(stderr, "ColumnChunkReader::next_page() set state DATA_LOADED\n");
     return Status::OK();
 }
 

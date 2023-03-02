@@ -86,14 +86,18 @@ public:
 
     // Skip current page(will not read and parse) if the page is filtered by predicates.
     Status skip_page() {
+//        fprintf(stderr, "ColumnChunkReader::skip_page()\n");
+        Status res = Status::OK();
         _remaining_num_values = 0;
         if (_state == HEADER_PARSED) {
-            return _page_reader->skip_page();
+            res = _page_reader->skip_page();
         }
-        if (_state != DATA_LOADED) {
-            return Status::Corruption("Should parse page header to skip page");
-        }
-        return Status::OK();
+//        if (_state != DATA_LOADED) {
+//            return Status::Corruption("Should parse page header to skip page");
+//        }
+//        fprintf(stderr, "ColumnChunkReader::skip_page() set state INITIALIZED\n");
+        _state = INITIALIZED;
+        return res;
     }
     // Skip some values(will not read and parse) in current page if the values are filtered by predicates.
     // when skip_data = false, the underlying decoder will not skip data,

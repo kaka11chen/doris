@@ -903,7 +903,9 @@ Status VFileScanner::_init_expr_ctxes() {
         _full_base_schema_view->table_id = _output_tuple_desc->table_desc()->table_id();
     }
 
-    _split_conjuncts_internal(_vconjunct_ctx->root());
+    if (_vconjunct_ctx && _vconjunct_ctx->root()) {
+        _split_conjuncts_internal(_vconjunct_ctx->root());
+    }
     return Status::OK();
 }
 
