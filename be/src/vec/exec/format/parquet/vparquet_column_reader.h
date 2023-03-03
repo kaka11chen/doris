@@ -84,7 +84,7 @@ public:
                                     ColumnSelectVector& select_vector, size_t batch_size,
                                     size_t* read_rows, bool* eof) = 0;
 
-    virtual Status get_dict_values(MutableColumnPtr& doris_column) {
+    virtual Status get_dict_values(MutableColumnPtr& doris_column, bool *has_dict) {
         return Status::NotSupported("get_dict_values is not supported");
     }
 
@@ -129,7 +129,7 @@ public:
     Status read_column_data(ColumnPtr& doris_column, DataTypePtr& type,
                             ColumnSelectVector& select_vector, size_t batch_size, size_t* read_rows,
                             bool* eof) override;
-    Status get_dict_values(MutableColumnPtr& doris_column) override;
+    Status get_dict_values(MutableColumnPtr& doris_column, bool *has_dict) override;
     Status get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) override;
     const std::vector<level_t>& get_rep_level() const override { return _rep_levels; }
     const std::vector<level_t>& get_def_level() const override { return _def_levels; }
@@ -152,7 +152,7 @@ private:
     Status _read_nested_column(ColumnPtr& doris_column, DataTypePtr& type,
                                ColumnSelectVector& select_vector, size_t batch_size,
                                size_t* read_rows, bool* eof);
-    Status _try_load_dict_page(bool *loaded);
+    Status _try_load_dict_page(bool *loaded, bool *has_dict);
 };
 
 class ArrayColumnReader : public ParquetColumnReader {

@@ -138,6 +138,8 @@ public:
     level_t max_rep_level() const { return _max_rep_level; }
     level_t max_def_level() const { return _max_def_level; }
 
+    bool has_dict() const { return _has_dict; };
+
     // Get page decoder
     Decoder* get_page_decoder() { return _page_decoder; }
 
@@ -147,10 +149,16 @@ public:
     }
 
     Status get_dict_values(MutableColumnPtr& doris_column) {
+        if (_decoders.find(static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)) == _decoders.end()) {
+            fprintf(stderr, "get_dict_values error\n");
+        }
         return _decoders[static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)]->get_dict_values(doris_column);
     }
 
     Status get_dict_codes(const ColumnString* columnString, std::vector<int32_t>* dict_codes) {
+        if (_decoders.find(static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)) == _decoders.end()) {
+            fprintf(stderr, "get_dict_codes error\n");
+        }
         return _decoders[static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)]->get_dict_codes(columnString, dict_codes);
     }
 

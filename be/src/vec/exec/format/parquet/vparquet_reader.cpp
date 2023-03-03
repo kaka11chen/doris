@@ -195,6 +195,7 @@ Status ParquetReader::init_reader(
         std::vector<VExprContext*>* multi_slot_filter_conjuncts,
         std::unordered_map<int, std::vector<VExprContext*>>* slot_id_to_filter_conjuncts,
         bool filter_groups) {
+//    fprintf(stderr, "init_reader\n");
     _tuple_descriptor = tuple_descriptor;
     _colname_to_slot_id = colname_to_slot_id;
     _multi_slot_filter_conjuncts = multi_slot_filter_conjuncts;

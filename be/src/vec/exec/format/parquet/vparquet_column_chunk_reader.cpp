@@ -66,6 +66,7 @@ Status ColumnChunkReader::next_page() {
     if (_page_reader->get_page_header()->type == tparquet::PageType::DICTIONARY_PAGE) {
         // the first page maybe directory page even if _metadata.__isset.dictionary_page_offset == false,
         // so we should parse the directory page in next_page()
+//        fprintf(stderr, "_decode_dict_page\n");
         RETURN_IF_ERROR(_decode_dict_page());
         // parse the real first data page
         return next_page();
@@ -140,6 +141,7 @@ Status ColumnChunkReader::load_page_data() {
 }
 
 Status ColumnChunkReader::_decode_dict_page() {
+//    fprintf(stderr, "_decode_dict_page\n");
     const tparquet::PageHeader& header = *_page_reader->get_page_header();
     DCHECK_EQ(tparquet::PageType::DICTIONARY_PAGE, header.type);
     SCOPED_RAW_TIMER(&_statistics.decode_dict_time);
@@ -181,6 +183,7 @@ Status ColumnChunkReader::_decode_dict_page() {
     RETURN_IF_ERROR(page_decoder->set_dict(dict_data, uncompressed_size,
                                            header.dictionary_page_header.num_values));
     _decoders[static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)] = std::move(page_decoder);
+//    fprintf(stderr, "get _decoders[static_cast<int>(tparquet::Encoding::RLE_DICTIONARY)]\n");
 
     _has_dict = true;
     return Status::OK();

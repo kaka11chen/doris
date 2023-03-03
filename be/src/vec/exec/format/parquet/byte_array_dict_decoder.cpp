@@ -80,7 +80,7 @@ Status ByteArrayDictDecoder::get_dict_codes(const ColumnString* columnString, st
 
 Status ByteArrayDictDecoder::decode_values(MutableColumnPtr& doris_column, DataTypePtr& data_type,
                                            ColumnSelectVector& select_vector) {
-//    fprintf(stderr, "ByteArrayDictDecoder::decode_values\n");
+//    fprintf(stderr, "ByteArrayDictDecoder::decode_values: %s\n", doris_column->get_name().c_str());
     size_t non_null_size = select_vector.num_values() - select_vector.num_nulls();
     if (doris_column->is_column_dictionary() &&
         assert_cast<ColumnDictI32&>(*doris_column).dict_size() == 0) {

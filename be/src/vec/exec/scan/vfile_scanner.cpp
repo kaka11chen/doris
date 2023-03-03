@@ -113,8 +113,8 @@ Status VFileScanner::prepare(
     return Status::OK();
 }
 
-Status VFileScanner::_split_conjuncts_internal(VExpr* conjunct_expr_root) {
-    static constexpr auto is_leaf = [](VExpr* expr) { return !expr->is_and_expr(); };
+Status VFileScanner::_split_conjuncts_internal(VExpr* conjunct_expr_root, bool first_and_found) {
+    static constexpr auto is_leaf = [](VExpr* expr, bool first_and_found) { return !expr->is_and_expr() || first_and_found; };
     //    auto in_predicate_checker = [](const std::vector<VExpr*>& children, const VSlotRef** slot,
     //                                   VExpr** child_contains_slot) {
     //        if (children.empty() ||
@@ -139,16 +139,25 @@ Status VFileScanner::_split_conjuncts_internal(VExpr* conjunct_expr_root) {
     //        }
     //        return false;
     //    };
-
     if (conjunct_expr_root != nullptr) {
-        if (is_leaf(conjunct_expr_root)) {
+        if (is_leaf(conjunct_expr_root, first_and_found)) {
             auto impl = conjunct_expr_root->get_impl();
             // If impl is not null, which means this a conjuncts from runtime filter.
             VExpr* cur_expr = impl ? const_cast<VExpr*>(impl) : conjunct_expr_root;
             //            bool is_runtimer_filter_predicate =
             //                    _rf_vexpr_set.find(conjunct_expr_root) != _rf_vexpr_set.end();
+            VExprContext* new_ctx = _state->obj_pool()->add(new VExprContext(cur_expr->clone(_state->obj_pool())));
+            _vconjunct_ctx->clone_fn_contexts(new_ctx);
+            RETURN_IF_ERROR(new_ctx->prepare(_state, *_src_row_desc));
+            RETURN_IF_ERROR(new_ctx->open(_state));
+
             std::vector<int> slot_ids;
             _get_slot_ids(cur_expr, &slot_ids);
+            if (slot_ids.size() == 0) {
+                _multi_slot_filter_conjuncts.emplace_back(new_ctx);
+                return Status::OK();
+            }
+//            fprintf(stderr, "slot_ids.size(): %ld, slot_ids[0]: %d\n", slot_ids.size(), slot_ids[0]);
             bool single_slot = true;
             for (int i = 1; i < slot_ids.size(); i++) {
                 if (slot_ids[i] != slot_ids[0]) {
@@ -156,22 +165,28 @@ Status VFileScanner::_split_conjuncts_internal(VExpr* conjunct_expr_root) {
                     break;
                 }
             }
-            VExprContext* new_ctx = _state->obj_pool()->add(new VExprContext(cur_expr->clone(_state->obj_pool())));
-            _vconjunct_ctx->clone_fn_contexts(new_ctx);
-            RETURN_IF_ERROR(new_ctx->prepare(_state, *_src_row_desc));
-            RETURN_IF_ERROR(new_ctx->open(_state));
             if (single_slot) {
                 SlotId slot_id = slot_ids[0];
                 if (_slot_id_to_filter_conjuncts.find(slot_id) == _slot_id_to_filter_conjuncts.end()) {
                     _slot_id_to_filter_conjuncts.insert({slot_id, std::vector<VExprContext*>()});
                 }
+//                fprintf(stderr, "slot_id: %d\n", slot_id);
                 _slot_id_to_filter_conjuncts[slot_id].emplace_back(new_ctx);
+//                fprintf(stderr, "_slot_id_to_filter_conjuncts.size(): %ld\n", _slot_id_to_filter_conjuncts.size());
+                auto iter = _slot_id_to_filter_conjuncts.find(slot_id);
+                if (iter != _slot_id_to_filter_conjuncts.end()) {
+                } else {
+                    fprintf(stderr, "not found\n");
+                }
             } else {
                 _multi_slot_filter_conjuncts.emplace_back(new_ctx);
             }
         } else {
-            RETURN_IF_ERROR(_split_conjuncts_internal(conjunct_expr_root->children()[0]));
-            RETURN_IF_ERROR(_split_conjuncts_internal(conjunct_expr_root->children()[1]));
+//            first_and_found = true;
+            RETURN_IF_ERROR(
+                    _split_conjuncts_internal(conjunct_expr_root->children()[0], first_and_found));
+            RETURN_IF_ERROR(
+                    _split_conjuncts_internal(conjunct_expr_root->children()[1], first_and_found));
         }
     }
     return Status::OK();
@@ -904,7 +919,9 @@ Status VFileScanner::_init_expr_ctxes() {
     }
 
     if (_vconjunct_ctx && _vconjunct_ctx->root()) {
-        _split_conjuncts_internal(_vconjunct_ctx->root());
+//        fprintf(stderr, "start _split_conjuncts_internal\n");
+        _split_conjuncts_internal(_vconjunct_ctx->root(), false);
+//        fprintf(stderr, "finish _split_conjuncts_internal\n");
     }
     return Status::OK();
 }

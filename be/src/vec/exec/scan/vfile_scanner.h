@@ -150,7 +150,7 @@ private:
     Status _generate_fill_columns();
     Status _handle_dynamic_block(Block* block);
     Status _split_conjuncts();
-    Status _split_conjuncts_internal(VExpr* conjunct_expr_root);
+    Status _split_conjuncts_internal(VExpr* conjunct_expr_root, bool first_and_found);
     void _get_slot_ids(VExpr* expr, std::vector<int> *slot_ids);
 
     void _reset_counter() {

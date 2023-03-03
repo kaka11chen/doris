@@ -39,6 +39,7 @@ Status ByteArrayPlainDecoder::skip_values(size_t num_values) {
 
 Status ByteArrayPlainDecoder::decode_values(MutableColumnPtr& doris_column, DataTypePtr& data_type,
                                             ColumnSelectVector& select_vector) {
+//    fprintf(stderr, "ByteArrayPlainDecoder::decode_values: %s\n", doris_column->get_name().c_str());
     TypeIndex logical_type = remove_nullable(data_type)->get_type_id();
     switch (logical_type) {
     case TypeIndex::String:

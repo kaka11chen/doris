@@ -144,7 +144,8 @@ private:
     Status _filter_block_internal(Block* block, const vector<uint32_t>& columns_to_filter,
                                   const IColumn::Filter& filter);
 
-    bool _can_using_dict_filter(const string& predicate_col_name);
+    bool _can_using_dict_filter(const string& predicate_col_name, const tparquet::ColumnMetaData& column_metadata);
+    bool _column_all_pages_dict_encoded(const tparquet::ColumnMetaData& column_metadata);
     Status _rewrite_dict_predicates();
     void _set_column_id(VExpr *root);
     Status _execute_conjuncts(const std::vector<VExprContext*>& ctxs, Block* block, std::vector<uint32_t> &columns_to_filter, int column_to_keep);

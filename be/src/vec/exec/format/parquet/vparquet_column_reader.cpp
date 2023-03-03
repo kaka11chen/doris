@@ -320,10 +320,11 @@ Status ScalarColumnReader::_read_nested_column(ColumnPtr& doris_column, DataType
     }
     return Status::OK();
 }
-Status ScalarColumnReader::get_dict_values(MutableColumnPtr& doris_column) {
+Status ScalarColumnReader::get_dict_values(MutableColumnPtr& doris_column, bool *has_dict) {
+//    fprintf(stderr, "get_dict_values\n");
     bool loaded;
-    RETURN_IF_ERROR(_try_load_dict_page(&loaded));
-    if (loaded) {
+    RETURN_IF_ERROR(_try_load_dict_page(&loaded, has_dict));
+    if (loaded && has_dict) {
         return _chunk_reader->get_dict_values(doris_column);
     }
     return Status::OK();
@@ -333,7 +334,7 @@ Status ScalarColumnReader::get_dict_codes(const ColumnString* columnString, std:
     return _chunk_reader->get_dict_codes(columnString, dict_codes);
 }
 
-Status ScalarColumnReader::_try_load_dict_page(bool *loaded) {
+Status ScalarColumnReader::_try_load_dict_page(bool *loaded, bool *has_dict) {
     if (_chunk_reader->remaining_num_values() == 0) {
         if (!_chunk_reader->has_next_page()) {
             *loaded = false;
@@ -342,6 +343,7 @@ Status ScalarColumnReader::_try_load_dict_page(bool *loaded) {
         RETURN_IF_ERROR(_chunk_reader->next_page());
 //        *loaded = _has_dict;
         *loaded = true;
+        *has_dict = _chunk_reader->has_dict();
     }
     return Status::OK();
 }

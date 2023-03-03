@@ -95,7 +95,8 @@ Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>
         _column_readers[read_col._file_slot_name] = std::move(reader);
     }
     for (auto& predicate_col_name : _lazy_read_ctx.predicate_columns) {
-        if (_can_using_dict_filter(predicate_col_name)) {
+        auto field = const_cast<FieldSchema*>(schema.get_column(predicate_col_name));
+        if (_can_using_dict_filter(predicate_col_name, _row_group_meta.columns[field->physical_column_index].meta_data)) {
             _dict_filter_col_names.emplace_back(predicate_col_name);
         } else {
             int slot_id = (*_colname_to_slot_id)[predicate_col_name];
@@ -111,20 +112,26 @@ Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>
     return Status::OK();
 }
 
-bool RowGroupReader::_can_using_dict_filter(const string& predicate_col_name) {
+bool RowGroupReader::_can_using_dict_filter(const string& predicate_col_name, const tparquet::ColumnMetaData& column_metadata) {
+    return false;
+    SlotDescriptor* slot = nullptr;
     const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
-    SlotDescriptor* slot = slots.at(_colname_to_slot_id->at(predicate_col_name));
+    int slot_id = _colname_to_slot_id->at(predicate_col_name);
+    for (auto each : slots) {
+        if (each->id() == slot_id) {
+            slot = each;
+            break;
+        }
+    }
     // only varchar and char type support dict filter
     if (!slot->type().is_string_type()) {
         return false;
     }
 
     // check slot has conjuncts
-    SlotId slot_id = slot->id();
     if (_slot_id_to_filter_conjuncts->find(slot_id) == _slot_id_to_filter_conjuncts->end()) {
         return false;
     }
-    return true;
     // only varchar and char type support dict filter
 //    if (!slot->type().is_string_type()) {
 //        return false;
@@ -148,10 +155,68 @@ bool RowGroupReader::_can_using_dict_filter(const string& predicate_col_name) {
 //        }
 //    }
 //
-//    // check all data pages dict encoded
-//    if (!_column_all_pages_dict_encoded(column_metadata)) {
-//        return false;
-//    }
+    // check all data pages dict encoded
+    if (!_column_all_pages_dict_encoded(column_metadata)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool RowGroupReader::_column_all_pages_dict_encoded(const tparquet::ColumnMetaData& column_metadata) {
+    // The Parquet spec allows for column chunks to have mixed encodings
+    // where some data pages are dictionary-encoded and others are plain
+    // encoded. For example, a Parquet file writer might start writing
+    // a column chunk as dictionary encoded, but it will switch to plain
+    // encoding if the dictionary grows too large.
+    //
+    // In order for dictionary filters to skip the entire row group,
+    // the conjuncts must be evaluated on column chunks that are entirely
+    // encoded with the dictionary encoding. There are two checks
+    // available to verify this:
+    // 1. The encoding_stats field on the column chunk metadata provides
+    //    information about the number of data pages written in each
+    //    format. This allows for a specific check of whether all the
+    //    data pages are dictionary encoded.
+    // 2. The encodings field on the column chunk metadata lists the
+    //    encodings used. If this list contains the dictionary encoding
+    //    and does not include unexpected encodings (i.e. encodings not
+    //    associated with definition/repetition levels), then it is entirely
+    //    dictionary encoded.
+    if (column_metadata.__isset.encoding_stats) {
+        // Condition #1 above
+        for (const tparquet::PageEncodingStats& enc_stat : column_metadata.encoding_stats) {
+            if (enc_stat.page_type == tparquet::PageType::DATA_PAGE &&
+                (enc_stat.encoding != tparquet::Encoding::PLAIN_DICTIONARY &&
+                 enc_stat.encoding != tparquet::Encoding::RLE_DICTIONARY) &&
+                enc_stat.count > 0) {
+                return false;
+            }
+        }
+    } else {
+        // Condition #2 above
+        bool has_dict_encoding = false;
+        bool has_nondict_encoding = false;
+        for (const tparquet::Encoding::type& encoding : column_metadata.encodings) {
+            if (encoding == tparquet::Encoding::PLAIN_DICTIONARY || encoding == tparquet::Encoding::RLE_DICTIONARY) {
+                has_dict_encoding = true;
+            }
+
+            // RLE and BIT_PACKED are used for repetition/definition levels
+            if (encoding != tparquet::Encoding::PLAIN_DICTIONARY && encoding != tparquet::Encoding::RLE_DICTIONARY &&
+                encoding != tparquet::Encoding::RLE && encoding != tparquet::Encoding::BIT_PACKED) {
+                has_nondict_encoding = true;
+                break;
+            }
+        }
+        // Not entirely dictionary encoded if:
+        // 1. No dictionary encoding listed
+        // OR
+        // 2. Some non-dictionary encoding is listed
+        if (!has_dict_encoding || has_nondict_encoding) {
+            return false;
+        }
+    }
 
     return true;
 }
@@ -221,11 +286,14 @@ Status RowGroupReader::next_batch(Block* block, size_t batch_size, size_t* read_
                 if (auto* nullable_column = check_and_get_column<ColumnNullable>(*column)) {
                     MutableColumnPtr nested_column = nullable_column->get_nested_column_ptr()->assume_mutable();
                     auto* dict_column = typeid_cast<ColumnDictI32*>(nested_column.get());
+                    DCHECK(dict_column);
 //                    for (int i = 0; i < dict_column->get_data().size(); ++i) {
 //                        fprintf(stderr, "p_brand[%d]: %d, value: %s\n", i, dict_column->get_data().data()[i], dict_column->get_value(dict_column->get_data().data()[i]).to_string().c_str());
 //                    }
 
-                    MutableColumnPtr string_column = dict_column->convert_to_string_column_if_dictionary();
+//                    MutableColumnPtr string_column = dict_column->convert_to_string_column_if_dictionary();
+                    auto string_column = ColumnString::create();
+//                    res->reserve(_codes.capacity());
 //                    for (int i = 0; i < string_column->size(); ++i) {
 //                        fprintf(stderr, "p_brand str[%d]: %s\n", i, string_column->get_data_at(i).to_string().c_str());
 //                    }
@@ -274,6 +342,7 @@ Status RowGroupReader::_read_column_data(Block* block, const std::vector<std::st
         select_vector.reset();
         while (!col_eof && col_read_rows < batch_size) {
             size_t loop_rows = 0;
+//            fprintf(stderr, "read_col: %s\n", read_col.c_str());
             RETURN_IF_ERROR(_column_readers[read_col]->read_column_data(
                     column_ptr, column_type, select_vector, batch_size - col_read_rows, &loop_rows,
                     &col_eof));
@@ -729,16 +798,29 @@ Status RowGroupReader::_filter_block_internal(Block* block,
 }
 
 Status RowGroupReader::_rewrite_dict_predicates() {
+//    fprintf(stderr, "_dict_filter_col_names.size(): %ld\n", _dict_filter_col_names.size());
     for (auto& dict_filter_col_name : _dict_filter_col_names) {
 //        fprintf(stderr, "_rewrite_dict_predicates step1\n");
         int slot_id = (*_colname_to_slot_id)[dict_filter_col_name];
         Block temp_block;
         MutableColumnPtr dict_value_column = ColumnString::create();
-        RETURN_IF_ERROR(_column_readers[dict_filter_col_name]->get_dict_values(dict_value_column));
-        temp_block.insert({std::move(dict_value_column), std::make_shared<DataTypeString>(), ""});
+//        fprintf(stderr, "_rewrite_dict_predicates dict_filter_col_name: %s\n", dict_filter_col_name.c_str());
+        bool has_dict = false;
+        RETURN_IF_ERROR(_column_readers[dict_filter_col_name]->get_dict_values(dict_value_column, &has_dict));
+        DCHECK(has_dict);
 
-        std::vector<VExprContext*>& ctxs = _slot_id_to_filter_conjuncts->find(slot_id)->second;
-        for (auto &ctx : ctxs) {
+        temp_block.insert({ColumnNullable::create(std::move(dict_value_column), ColumnUInt8::create(dict_value_column->size(), 0)),
+                           std::make_shared<DataTypeNullable>(std::make_shared<DataTypeString>()), ""});
+
+        std::vector<VExprContext*> *ctxs = nullptr;
+//        fprintf(stderr, "_slot_id_to_filter_conjuncts->size()2: %ld\n", _slot_id_to_filter_conjuncts->size());
+        auto iter = _slot_id_to_filter_conjuncts->find(slot_id);
+        if (iter != _slot_id_to_filter_conjuncts->end()) {
+            ctxs = &(iter->second);
+        } else {
+//            fprintf(stderr, "dict_filter_col_name: %s, slot_id:%d\n", dict_filter_col_name.c_str(), slot_id);
+        }
+        for (auto &ctx : (*ctxs)) {
             VExpr *root = ctx->root();
             _set_column_id(root);
         }
@@ -759,7 +841,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
 
 //        fprintf(stderr, "_rewrite_dict_predicates step2: ctxs.size(): %ld\n", ctxs.size());
 
-        RETURN_IF_ERROR(_execute_conjuncts(ctxs, &temp_block, columns_to_filter, column_to_keep));
+        RETURN_IF_ERROR(_execute_conjuncts(*ctxs, &temp_block, columns_to_filter, column_to_keep));
         // dict column is empty after conjunct eval, file group can be skipped
         if (temp_block.rows() == 0) {
             _is_group_filtered = true;
@@ -768,8 +850,10 @@ Status RowGroupReader::_rewrite_dict_predicates() {
 
         // get dict codes
         std::vector<int32_t> dict_codes;
+        const ColumnNullable* nullable_column = static_cast<const ColumnNullable*>(temp_block.get_by_position(0).column.get());
+        const ColumnString *nested_column = static_cast<const ColumnString*>(nullable_column->get_nested_column_ptr().get());
         RETURN_IF_ERROR(_column_readers[dict_filter_col_name]->get_dict_codes(
-                static_cast<const ColumnString *>(temp_block.get_by_position(0).column.get()), &dict_codes));
+                nested_column, &dict_codes));
         if (dict_codes.size() == 1) {
             VExpr* root;
             {
@@ -818,7 +902,15 @@ Status RowGroupReader::_rewrite_dict_predicates() {
 //                    }
 //                    ++pos;
 //                }
-                VExpr* slot_ref_expr = new VSlotRef(_tuple_descriptor->slots()[slot_id]);
+                SlotDescriptor* slot = nullptr;
+                const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
+                for (auto each : slots) {
+                    if (each->id() == slot_id) {
+                        slot = each;
+                        break;
+                    }
+                }
+                VExpr* slot_ref_expr = new VSlotRef(slot);
                 root->add_child(slot_ref_expr);
             }
 
@@ -908,7 +1000,15 @@ Status RowGroupReader::_rewrite_dict_predicates() {
                 //                    }
                 //                    ++pos;
                 //                }
-                VExpr* slot_ref_expr = new VSlotRef(_tuple_descriptor->slots()[slot_id]);
+                SlotDescriptor* slot = nullptr;
+                const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
+                for (auto each : slots) {
+                    if (each->id() == slot_id) {
+                        slot = each;
+                        break;
+                    }
+                }
+                VExpr* slot_ref_expr = new VSlotRef(slot);
                 root->add_child(slot_ref_expr);
             }
 
