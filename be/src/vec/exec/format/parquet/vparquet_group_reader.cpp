@@ -58,6 +58,7 @@ RowGroupReader::~RowGroupReader() {
         }
     }
     _obj_pool->clear();
+//    fprintf(stderr, "RowGroupReader dtor()\n");
 }
 
 Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>& row_ranges,
@@ -120,7 +121,6 @@ Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>
 }
 
 bool RowGroupReader::_can_using_dict_filter(const string& predicate_col_name, const tparquet::ColumnMetaData& column_metadata) {
-    return false;
     SlotDescriptor* slot = nullptr;
     const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
     int slot_id = _colname_to_slot_id->at(predicate_col_name);
