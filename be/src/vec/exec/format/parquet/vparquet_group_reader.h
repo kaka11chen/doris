@@ -179,8 +179,10 @@ private:
     std::vector<std::string> _dict_filter_col_names;
 //    VExprContext* _rewritten_conjunct_ctx = nullptr;
     RuntimeState* _state;
+    std::shared_ptr<ObjectPool> _obj_pool;
 
     // dict value is empty after conjunct eval, file group can be skipped
     bool _is_group_filtered = false;
+
 };
 } // namespace doris::vectorized

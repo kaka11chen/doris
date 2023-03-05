@@ -680,14 +680,15 @@ Status VFileScanner::_get_next_reader() {
                         new IcebergTableReader((GenericReader*)parquet_reader, _profile, _state,
                                                _params, range, _kv_cache, _io_ctx.get());
                 init_status = iceberg_reader->init_reader(_file_col_names, _col_id_name_map,
-                                                          _colname_to_value_range, _push_down_expr);
+                                                          _colname_to_value_range, _push_down_expr, _real_tuple_desc, _colname_to_slot_id,
+                                                          &_multi_slot_filter_conjuncts, &_slot_id_to_filter_conjuncts);
                 RETURN_IF_ERROR(iceberg_reader->init_row_filters(range));
                 _cur_reader.reset((GenericReader*)iceberg_reader);
             } else {
                 std::vector<std::string> place_holder;
                 init_status = parquet_reader->init_reader(_file_col_names, place_holder,
                                                           _colname_to_value_range, _push_down_expr, _real_tuple_desc, _colname_to_slot_id,
-                                                          &_multi_slot_filter_conjuncts, &_slot_id_to_filter_conjuncts, true);
+                                                          &_multi_slot_filter_conjuncts, &_slot_id_to_filter_conjuncts);
                 _cur_reader.reset((GenericReader*)parquet_reader);
             }
             break;

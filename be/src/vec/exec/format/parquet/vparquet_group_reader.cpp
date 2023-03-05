@@ -45,17 +45,19 @@ RowGroupReader::RowGroupReader(io::FileReaderSPtr file_reader,
           _ctz(ctz),
           _position_delete_ctx(position_delete_ctx),
           _lazy_read_ctx(lazy_read_ctx),
-          _state(state)
+          _state(state),
+          _obj_pool(new ObjectPool())
 {
 }
 
 RowGroupReader::~RowGroupReader() {
     _column_readers.clear();
-    for(auto* ctx: _dict_filter_conjunct) {
+    for (auto* ctx: _dict_filter_conjunct) {
         if (ctx) {
             ctx->close(_state);
         }
     }
+    _obj_pool->clear();
 }
 
 Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>& row_ranges,
@@ -68,8 +70,10 @@ Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>
     _tuple_descriptor = tuple_descriptor;
     _colname_to_slot_id = colname_to_slot_id;
     _slot_id_to_filter_conjuncts = slot_id_to_filter_conjuncts;
-    _filter_conjunct.insert(_filter_conjunct.end(), multi_slot_filter_conjuncts->begin(), multi_slot_filter_conjuncts->end());
-
+    if (multi_slot_filter_conjuncts) {
+        _filter_conjunct.insert(_filter_conjunct.end(), multi_slot_filter_conjuncts->begin(),
+                                multi_slot_filter_conjuncts->end());
+    }
     _merge_read_ranges(row_ranges);
     if (_read_columns.empty()) {
         // Query task that only select columns in path.
@@ -93,6 +97,9 @@ Status RowGroupReader::init(const FieldDescriptor& schema, std::vector<RowRange>
             return Status::Corruption("Init row group reader failed");
         }
         _column_readers[read_col._file_slot_name] = std::move(reader);
+    }
+    if (!_slot_id_to_filter_conjuncts) {
+        return Status::OK();
     }
     for (auto& predicate_col_name : _lazy_read_ctx.predicate_columns) {
         auto field = const_cast<FieldSchema*>(schema.get_column(predicate_col_name));
@@ -143,18 +150,19 @@ bool RowGroupReader::_can_using_dict_filter(const string& predicate_col_name, co
 //        return false;
 //    }
 
-//    // check is null or is not null
-//    // is null or is not null conjunct should not eval dict value, this will always return empty set
-//    for (ExprContext* ctx : conjunct_ctxs_by_slot.at(slot_id)) {
-//        const Expr* root_expr = ctx->root();
-//        if (root_expr->node_type() == TExprNodeType::FUNCTION_CALL) {
-//            std::string is_null_str;
-//            if (root_expr->is_null_scalar_function(is_null_str)) {
-//                return false;
-//            }
-//        }
-//    }
-//
+    // check is null or is not null
+    // is null or is not null conjunct should not eval dict value, this will always return empty set
+    for (VExprContext* ctx : _slot_id_to_filter_conjuncts->at(slot_id)) {
+        const VExpr* root_expr = ctx->root();
+        if (root_expr->node_type() == TExprNodeType::FUNCTION_CALL) {
+            std::string is_null_str;
+            std::string function_name = root_expr->fn().name.function_name;
+            if (function_name.compare("is_null_pred") == 0 || function_name.compare("is_not_null_pred") == 0) {
+                return false;
+            }
+        }
+    }
+
     // check all data pages dict encoded
     if (!_column_all_pages_dict_encoded(column_metadata)) {
         return false;
@@ -291,8 +299,8 @@ Status RowGroupReader::next_batch(Block* block, size_t batch_size, size_t* read_
 //                        fprintf(stderr, "p_brand[%d]: %d, value: %s\n", i, dict_column->get_data().data()[i], dict_column->get_value(dict_column->get_data().data()[i]).to_string().c_str());
 //                    }
 
-//                    MutableColumnPtr string_column = dict_column->convert_to_string_column_if_dictionary();
-                    auto string_column = ColumnString::create();
+                    MutableColumnPtr string_column = dict_column->convert_to_string_column_if_dictionary();
+//                    auto string_column = ColumnString::create();
 //                    res->reserve(_codes.capacity());
 //                    for (int i = 0; i < string_column->size(); ++i) {
 //                        fprintf(stderr, "p_brand str[%d]: %s\n", i, string_column->get_data_at(i).to_string().c_str());
@@ -879,7 +887,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
                 texpr_node.__set_is_nullable(true);
                 texpr_node.__set_child_type(TPrimitiveType::INT);
                 texpr_node.__set_num_children(2);
-                root = _state->obj_pool()->add(new VectorizedFnCall(texpr_node));
+                root = _obj_pool->add(new VectorizedFnCall(texpr_node));
             }
             {
 //            TExprNode texpr_node;
@@ -893,7 +901,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
 //            texpr_node.__set_slot_ref(slot_ref);
 //            texpr_node.__isset.output_column = true;
 //            texpr_node.__set_output_column(0);
-//            VExpr* slot_ref_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
+//            VExpr* slot_ref_expr = _obj_pool->add(new VLiteral(texpr_node));
 //                VExpr* slot_ref_expr =  _lazy_read_ctx.vconjunct_ctx->root()[1].clone(_state->obj_pool());
 //                int pos = 0;
 //                for (SlotDescriptor*slot : _tuple_descriptor->slots()) {
@@ -924,7 +932,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
                     //                fprintf(stderr, "dict_codes[0]: %d\n", dict_codes[0]);
                     int_literal.__set_value(dict_codes[0]);
                     texpr_node.__set_int_literal(int_literal);
-                    VExpr* literal_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
+                    VExpr* literal_expr = _obj_pool->add(new VLiteral(texpr_node));
                     root->add_child(literal_expr);
                 }
             }
@@ -941,7 +949,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
 //            VExpr* right_chid = new VLiteral("right", dict_codes[0]);
 //            root->add_child(left_chid);
 //            root->add_child(right_chid);
-            VExprContext* rewritten_conjunct_ctx = _state->obj_pool()->add(new VExprContext(root));
+            VExprContext* rewritten_conjunct_ctx = _obj_pool->add(new VExprContext(root));
             RETURN_IF_ERROR(rewritten_conjunct_ctx->prepare(_state,
                                                             RowDescriptor(const_cast<TupleDescriptor*>(_tuple_descriptor), true)));
             RETURN_IF_ERROR(rewritten_conjunct_ctx->open(_state));
@@ -977,7 +985,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
                 texpr_node.__set_is_nullable(true);
                 texpr_node.__set_child_type(TPrimitiveType::INT);
                 texpr_node.__set_num_children(1 + dict_codes.size());
-                root = _state->obj_pool()->add(new VInPredicate(texpr_node));
+                root = _obj_pool->add(new VInPredicate(texpr_node));
             }
             {
                 //            TExprNode texpr_node;
@@ -991,8 +999,8 @@ Status RowGroupReader::_rewrite_dict_predicates() {
                 //            texpr_node.__set_slot_ref(slot_ref);
                 //            texpr_node.__isset.output_column = true;
                 //            texpr_node.__set_output_column(0);
-                //            VExpr* slot_ref_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
-                //                VExpr* slot_ref_expr =  _lazy_read_ctx.vconjunct_ctx->root()[1].clone(_state->obj_pool());
+                //            VExpr* slot_ref_expr = _obj_pool->add(new VLiteral(texpr_node));
+                //                VExpr* slot_ref_expr =  _lazy_read_ctx.vconjunct_ctx->root()[1].clone(_obj_pool);
                 //                int pos = 0;
                 //                for (SlotDescriptor*slot : _tuple_descriptor->slots()) {
                 //                    if (slot->col_name() == "s_region") {
@@ -1021,7 +1029,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
                     //                fprintf(stderr, "dict_codes[0]: %d\n", dict_codes[0]);
                     int_literal.__set_value(dict_codes[i]);
                     texpr_node.__set_int_literal(int_literal);
-                    VExpr* literal_expr = _state->obj_pool()->add(new VLiteral(texpr_node));
+                    VExpr* literal_expr = _obj_pool->add(new VLiteral(texpr_node));
                     root->add_child(literal_expr);
                 }
             }
@@ -1038,7 +1046,7 @@ Status RowGroupReader::_rewrite_dict_predicates() {
             //            VExpr* right_chid = new VLiteral("right", dict_codes[0]);
             //            root->add_child(left_chid);
             //            root->add_child(right_chid);
-            VExprContext* rewritten_conjunct_ctx = _state->obj_pool()->add(new VExprContext(root));
+            VExprContext* rewritten_conjunct_ctx = _obj_pool->add(new VExprContext(root));
             RETURN_IF_ERROR(rewritten_conjunct_ctx->prepare(_state,
                                                             RowDescriptor(const_cast<TupleDescriptor*>(_tuple_descriptor), true)));
             RETURN_IF_ERROR(rewritten_conjunct_ctx->open(_state));
