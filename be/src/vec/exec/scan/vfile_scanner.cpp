@@ -564,10 +564,14 @@ Status VFileScanner::_get_next_reader() {
             break;
         }
         case TFileFormatType::FORMAT_ORC: {
+            if (!_is_load && _push_down_expr == nullptr && _vconjunct_ctx != nullptr) {
+                RETURN_IF_ERROR(_vconjunct_ctx->clone(_state, &_push_down_expr));
+                _discard_conjuncts();
+            }
             _cur_reader.reset(new OrcReader(_profile, _params, range, _file_col_names,
                                             _state->query_options().batch_size, _state->timezone(),
                                             _io_ctx.get()));
-            init_status = ((OrcReader*)(_cur_reader.get()))->init_reader(_colname_to_value_range);
+            init_status = ((OrcReader*)(_cur_reader.get()))->init_reader(_colname_to_value_range, _push_down_expr);
             break;
         }
         case TFileFormatType::FORMAT_CSV_PLAIN:
