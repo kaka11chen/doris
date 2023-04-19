@@ -878,9 +878,11 @@ Status NewJsonReader::_write_data_to_column(rapidjson::Value::ConstValueIterator
             wbytes = snprintf(tmp_buf, sizeof(tmp_buf), "%" PRIu64, value->GetUint64());
         } else if (value->IsInt64()) {
             wbytes = snprintf(tmp_buf, sizeof(tmp_buf), "%" PRId64, value->GetInt64());
+	} else if (value->IsFloat() || value->IsDouble()) {
+//            wbytes = snprintf(tmp_buf, sizeof(tmp_buf), "%f", value->GetDouble());
+            wbytes = FastDoubleToBuffer(value->GetDouble(), tmp_buf);
         } else {
-            wbytes = snprintf(tmp_buf, sizeof(tmp_buf), "%f", value->GetDouble());
-        }
+	}
         str_value = tmp_buf;
         break;
     case rapidjson::Type::kFalseType:

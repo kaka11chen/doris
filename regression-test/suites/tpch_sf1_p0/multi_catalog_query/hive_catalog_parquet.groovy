@@ -485,6 +485,7 @@ where
         sql """set parallel_fragment_exec_instance_num=8"""
         sql """set disable_join_reorder=false"""
         sql """set enable_cost_based_join_reorder=true"""
+        sql """set enable_nereids_planner=true"""
         qt_q15 """
 with revenue0 as
 (select
