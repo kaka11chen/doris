@@ -86,9 +86,9 @@ public class JdbcExecutor {
         } catch (TException e) {
             throw new InternalException(e.getMessage());
         }
-        minPoolSize = Integer.valueOf(System.getProperty("JDBC_MIN_POOL"));
-        maxPoolSize = Integer.valueOf(System.getProperty("JDBC_MAX_POOL"));
-        maxIdelTime = Integer.valueOf(System.getProperty("JDBC_MAX_IDEL_TIME"));
+        minPoolSize = 1;
+        maxPoolSize = 100;
+        maxIdelTime = 600000;
         minIdleSize = minPoolSize > 0 ? 1 : 0;
         init(request.driver_path, request.statement, request.batch_size, request.jdbc_driver_class,
                 request.jdbc_url, request.jdbc_user, request.jdbc_password, request.op, request.table_type);

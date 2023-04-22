@@ -464,6 +464,17 @@ HADOOP_LIBS_X86_NAME="hadoop_lib_3.3.4-x86.tar.gz"
 HADOOP_LIBS_X86_SOURCE="hadoop_lib_3.3.4-x86"
 HADOOP_LIBS_X86_MD5SUM="96117450170487f007ffeca5ddf62f7e"
 
+# ryu
+#RYU_DOWNLOAD="https://github.com/ulfjack/ryu/archive/75d5a85440ed356ad7b23e9e6002d71f62a6255c.tar.gz"
+#RYU_NAME="ryu-75d5a85440ed356ad7b23e9e6002d71f62a6255c.tar.gz"
+#RYU_SOURCE="ryu-75d5a85440ed356ad7b23e9e6002d71f62a6255c"
+#RYU_MD5SUM="17e1c609b59c8e34c5ebe34eac918bbd"
+
+RYU_DOWNLOAD="https://github.com/ulfjack/ryu/archive/aa31ca9361d21b1a00ee054aac49c87d07e74abc.zip"
+RYU_NAME="ryu-aa31ca9361d21b1a00ee054aac49c87d07e74abc.zip"
+RYU_SOURCE="ryu-aa31ca9361d21b1a00ee054aac49c87d07e74abc"
+RYU_MD5SUM="cb82b6da904d919470fe3f5a01ca30ff"
+
 # all thirdparties which need to be downloaded is set in array TP_ARCHIVES
 export TP_ARCHIVES=(
     'CLUCENE'
@@ -532,6 +543,7 @@ export TP_ARCHIVES=(
     'CONCURRENTQUEUE'
     'FAST_FLOAT'
     'HADOOP_LIBS_X86'
+    'RYU'
 )
 
 if [[ "$(uname -s)" == 'Darwin' ]]; then
