@@ -160,13 +160,18 @@ struct RowRefList : RowRef {
         next = next->insert(std::move(row_ref), pool);
     }
 
-    uint32_t get_row_count() { return row_count; }
+    uint32_t get_row_count() { return 1; }
 
 private:
     friend class ForwardIterator<RowRefList>;
 
     Batch<RowRefType>* next = nullptr;
     uint32_t row_count = 1;
+};
+
+struct RowRefListRef {
+    using RefType = RowRefList;
+    RefType* pointer;
 };
 
 struct RowRefListWithFlag : RowRef {
@@ -205,6 +210,12 @@ private:
     uint32_t row_count = 1;
 };
 
+
+struct RowRefListWithFlagRef {
+    using RefType = RowRefListWithFlag;
+    RefType* pointer;
+};
+
 struct RowRefListWithFlags : RowRefWithFlag {
     using RowRefType = RowRefWithFlag;
 
@@ -237,6 +248,11 @@ private:
 
     Batch<RowRefType>* next = nullptr;
     uint32_t row_count = 1;
+};
+
+struct RowRefListWithFlagsRef {
+    using RefType = RowRefListWithFlags;
+    RefType* pointer;
 };
 
 } // namespace doris::vectorized

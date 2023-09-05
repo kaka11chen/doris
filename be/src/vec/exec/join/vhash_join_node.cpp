@@ -174,7 +174,8 @@ HashJoinBuildContext::HashJoinBuildContext(HashJoinNode* join_node)
           _runtime_filter_descs(join_node->_runtime_filter_descs),
           _inserted_rows(join_node->_inserted_rows),
           _arena(join_node->_arena),
-          _build_bf_cardinality(join_node->_build_bf_cardinality) {}
+          _build_bf_cardinality(join_node->_build_bf_cardinality),
+          _hash_table_cell(join_node->_hash_table_cell)	{}
 
 HashJoinBuildContext::HashJoinBuildContext(pipeline::HashJoinBuildSinkLocalState* local_state)
         : _hash_table_memory_usage(local_state->_hash_table_memory_usage),
@@ -1122,15 +1123,15 @@ void HashJoinNode::_hash_table_init(RuntimeState* state) {
     std::visit(
             [&](auto&& join_op_variants, auto have_other_join_conjunct) {
                 using JoinOpType = std::decay_t<decltype(join_op_variants)>;
-                using RowRefListType = std::conditional_t<
-                        have_other_join_conjunct, RowRefListWithFlags,
+		using RowRefListType = std::conditional_t<
+                        have_other_join_conjunct, RowRefListWithFlagsRef,
                         std::conditional_t<JoinOpType::value == TJoinOp::RIGHT_ANTI_JOIN ||
                                                    JoinOpType::value == TJoinOp::RIGHT_SEMI_JOIN ||
                                                    JoinOpType::value == TJoinOp::RIGHT_OUTER_JOIN ||
                                                    JoinOpType::value == TJoinOp::FULL_OUTER_JOIN,
-                                           RowRefListWithFlag, RowRefList>>;
-                _probe_row_match_iter.emplace<ForwardIterator<RowRefListType>>();
-                _outer_join_pull_visited_iter.emplace<ForwardIterator<RowRefListType>>();
+                                           RowRefListWithFlagRef, RowRefListRef>>;
+                _probe_row_match_iter.emplace<ForwardIterator<typename RowRefListType::RefType>>();
+                _outer_join_pull_visited_iter.emplace<ForwardIterator<typename RowRefListType::RefType>>();
 
                 if (_build_expr_ctxs.size() == 1 && !_store_null_in_hash_table[0]) {
                     // Single column optimization
@@ -1285,6 +1286,10 @@ HashJoinNode::~HashJoinNode() {
     }
     if (_runtime_filter_slots != nullptr) {
         _runtime_filter_slots->finish_publish();
+    }
+    if (_hash_table_cell != nullptr) {
+        free(_hash_table_cell);
+	_hash_table_cell = nullptr;
     }
 }
 

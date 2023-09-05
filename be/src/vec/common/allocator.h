@@ -165,7 +165,7 @@ public:
         } else if (!use_mmap || (old_size < doris::config::mmap_threshold &&
                                  new_size < doris::config::mmap_threshold &&
                                  alignment <= MALLOC_MIN_ALIGNMENT)) {
-            memory_check(new_size);
+//            memory_check(new_size);
             /// Resize malloc'd memory region with no special alignment requirement.
             void* new_buf = ::realloc(buf, new_size);
             if (nullptr == new_buf) {

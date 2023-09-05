@@ -120,6 +120,7 @@ struct HashJoinBuildContext {
     std::unordered_map<const Block*, std::vector<int>>& _inserted_rows;
     std::shared_ptr<Arena>& _arena;
     size_t& _build_bf_cardinality;
+    char* _hash_table_cell = nullptr;
 };
 
 using ProfileCounter = RuntimeProfile::Counter;
@@ -186,13 +187,17 @@ struct ProcessHashTableBuild {
         // TODO, use the NDV expansion of the key column in the optimizer statistics
         if (!_join_context->_build_unique) {
             RETURN_IF_CATCH_EXCEPTION(hash_table_ctx.hash_table.expanse_for_add_elem(
-                    std::min<int>(_rows, config::hash_table_pre_expanse_max_rows)));
+                    std::min<int>(_rows, 150000000)));
         }
+
+	using CellType = std::conditional_t<true, RowRefList, RowRefListWithFlag>;
+        _join_context->_hash_table_cell = reinterpret_cast<char*>(malloc(std::min<int>(_rows, 150000000) * sizeof(CellType)));
 
         vector<int>& inserted_rows = _join_context->_inserted_rows[&_acquired_block];
         bool has_runtime_filter = !_join_context->_runtime_filter_descs.empty();
         if (has_runtime_filter) {
-            inserted_rows.reserve(_batch_size);
+            //inserted_rows.reserve(_batch_size);
+            inserted_rows.reserve(_rows);
         }
 
         _build_side_hash_values.resize(_rows);
@@ -260,31 +265,36 @@ struct ProcessHashTableBuild {
         if (has_runtime_filter && build_unique) {
             EMPLACE_IMPL(
                     if (emplace_result.is_inserted()) {
-                        new (&emplace_result.get_mapped()) Mapped({k, _offset});
+			new (&emplace_result.get_mapped()) Mapped();
+                        emplace_result.get_mapped().pointer = new (_join_context->_hash_table_cell + k * sizeof(CellType)) Mapped::RefType({k, _offset});
                         inserted_rows.push_back(k);
                         _join_context->_build_bf_cardinality++;
                     } else { _skip_rows++; });
         } else if (has_runtime_filter && !build_unique) {
             EMPLACE_IMPL(
                     if (emplace_result.is_inserted()) {
-                        new (&emplace_result.get_mapped()) Mapped({k, _offset});
+			new (&emplace_result.get_mapped()) Mapped();
+                        emplace_result.get_mapped().pointer = new (_join_context->_hash_table_cell + k * sizeof(CellType)) Mapped::RefType({k, _offset});
                         inserted_rows.push_back(k);
                         _join_context->_build_bf_cardinality++;
                     } else {
-                        emplace_result.get_mapped().insert({k, _offset}, *(_join_context->_arena));
+			emplace_result.get_mapped().pointer->insert({k, _offset}, *(_join_context->_arena));
                         inserted_rows.push_back(k);
                     });
         } else if (!has_runtime_filter && build_unique) {
             EMPLACE_IMPL(
                     if (emplace_result.is_inserted()) {
-                        new (&emplace_result.get_mapped()) Mapped({k, _offset});
+			new (&emplace_result.get_mapped()) Mapped();
+                        emplace_result.get_mapped().pointer = new (_join_context->_hash_table_cell + k * sizeof(CellType)) Mapped::RefType({k, _offset});
                     } else { _skip_rows++; });
         } else {
             EMPLACE_IMPL(
                     if (emplace_result.is_inserted()) {
-                        new (&emplace_result.get_mapped()) Mapped({k, _offset});
+			new (&emplace_result.get_mapped()) Mapped();
+                        emplace_result.get_mapped().pointer = new (_join_context->_hash_table_cell + k * sizeof(CellType)) Mapped::RefType({k, _offset});
                     } else {
-                        emplace_result.get_mapped().insert({k, _offset}, *(_join_context->_arena));
+			emplace_result.get_mapped().pointer->insert({k, _offset}, *(_join_context->_arena));
+
                     });
         }
 #undef EMPLACE_IMPL
@@ -419,35 +429,35 @@ template <bool has_null, typename RowRefListType>
 using I256FixedKeyHashTableContext = FixedKeyHashTableContext<UInt256, has_null, RowRefListType>;
 
 using HashTableVariants = std::variant<
-        std::monostate, SerializedHashTableContext<RowRefList>, I8HashTableContext<RowRefList>,
-        I16HashTableContext<RowRefList>, I32HashTableContext<RowRefList>,
-        I64HashTableContext<RowRefList>, I128HashTableContext<RowRefList>,
-        I256HashTableContext<RowRefList>, I64FixedKeyHashTableContext<true, RowRefList>,
-        I64FixedKeyHashTableContext<false, RowRefList>,
-        I128FixedKeyHashTableContext<true, RowRefList>,
-        I128FixedKeyHashTableContext<false, RowRefList>,
-        I256FixedKeyHashTableContext<true, RowRefList>,
-        I256FixedKeyHashTableContext<false, RowRefList>,
-        SerializedHashTableContext<RowRefListWithFlag>, I8HashTableContext<RowRefListWithFlag>,
-        I16HashTableContext<RowRefListWithFlag>, I32HashTableContext<RowRefListWithFlag>,
-        I64HashTableContext<RowRefListWithFlag>, I128HashTableContext<RowRefListWithFlag>,
-        I256HashTableContext<RowRefListWithFlag>,
-        I64FixedKeyHashTableContext<true, RowRefListWithFlag>,
-        I64FixedKeyHashTableContext<false, RowRefListWithFlag>,
-        I128FixedKeyHashTableContext<true, RowRefListWithFlag>,
-        I128FixedKeyHashTableContext<false, RowRefListWithFlag>,
-        I256FixedKeyHashTableContext<true, RowRefListWithFlag>,
-        I256FixedKeyHashTableContext<false, RowRefListWithFlag>,
-        SerializedHashTableContext<RowRefListWithFlags>, I8HashTableContext<RowRefListWithFlags>,
-        I16HashTableContext<RowRefListWithFlags>, I32HashTableContext<RowRefListWithFlags>,
-        I64HashTableContext<RowRefListWithFlags>, I128HashTableContext<RowRefListWithFlags>,
-        I256HashTableContext<RowRefListWithFlags>,
-        I64FixedKeyHashTableContext<true, RowRefListWithFlags>,
-        I64FixedKeyHashTableContext<false, RowRefListWithFlags>,
-        I128FixedKeyHashTableContext<true, RowRefListWithFlags>,
-        I128FixedKeyHashTableContext<false, RowRefListWithFlags>,
-        I256FixedKeyHashTableContext<true, RowRefListWithFlags>,
-        I256FixedKeyHashTableContext<false, RowRefListWithFlags>>;
+        std::monostate, SerializedHashTableContext<RowRefListRef>, I8HashTableContext<RowRefListRef>,
+        I16HashTableContext<RowRefListRef>, I32HashTableContext<RowRefListRef>,
+        I64HashTableContext<RowRefListRef>, I128HashTableContext<RowRefListRef>,
+        I256HashTableContext<RowRefListRef>, I64FixedKeyHashTableContext<true, RowRefListRef>,
+        I64FixedKeyHashTableContext<false, RowRefListRef>,
+        I128FixedKeyHashTableContext<true, RowRefListRef>,
+        I128FixedKeyHashTableContext<false, RowRefListRef>,
+        I256FixedKeyHashTableContext<true, RowRefListRef>,
+        I256FixedKeyHashTableContext<false, RowRefListRef>,
+        SerializedHashTableContext<RowRefListWithFlagRef>, I8HashTableContext<RowRefListWithFlagRef>,
+        I16HashTableContext<RowRefListWithFlagRef>, I32HashTableContext<RowRefListWithFlagRef>,
+        I64HashTableContext<RowRefListWithFlagRef>, I128HashTableContext<RowRefListWithFlagRef>,
+        I256HashTableContext<RowRefListWithFlagRef>,
+        I64FixedKeyHashTableContext<true, RowRefListWithFlagRef>,
+        I64FixedKeyHashTableContext<false, RowRefListWithFlagRef>,
+        I128FixedKeyHashTableContext<true, RowRefListWithFlagRef>,
+        I128FixedKeyHashTableContext<false, RowRefListWithFlagRef>,
+        I256FixedKeyHashTableContext<true, RowRefListWithFlagRef>,
+        I256FixedKeyHashTableContext<false, RowRefListWithFlagRef>,
+        SerializedHashTableContext<RowRefListWithFlagsRef>, I8HashTableContext<RowRefListWithFlagsRef>,
+        I16HashTableContext<RowRefListWithFlagsRef>, I32HashTableContext<RowRefListWithFlagsRef>,
+        I64HashTableContext<RowRefListWithFlagsRef>, I128HashTableContext<RowRefListWithFlagsRef>,
+        I256HashTableContext<RowRefListWithFlagRef>,
+        I64FixedKeyHashTableContext<true, RowRefListWithFlagsRef>,
+        I64FixedKeyHashTableContext<false, RowRefListWithFlagsRef>,
+        I128FixedKeyHashTableContext<true, RowRefListWithFlagsRef>,
+        I128FixedKeyHashTableContext<false, RowRefListWithFlagsRef>,
+        I256FixedKeyHashTableContext<true, RowRefListWithFlagsRef>,
+        I256FixedKeyHashTableContext<false, RowRefListWithFlagsRef>>;
 
 class VExprContext;
 
@@ -634,6 +644,8 @@ private:
 
     // maybe share hash table with other fragment instances
     std::shared_ptr<HashTableVariants> _hash_table_variants;
+
+    char* _hash_table_cell = nullptr;
 
     std::unique_ptr<HashTableCtxVariants> _process_hashtable_ctx_variants;
 

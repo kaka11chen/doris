@@ -250,7 +250,7 @@ Status ProcessHashTableProbe<JoinOpType>::do_process(HashTableType& hash_table_c
     int last_probe_index = probe_index;
     size_t probe_size = 0;
     auto& probe_row_match_iter =
-            std::get<ForwardIterator<Mapped>>(*_join_context->_probe_row_match_iter);
+            std::get<ForwardIterator<typename Mapped::RefType>>(*_join_context->_probe_row_match_iter);
     {
         SCOPED_TIMER(_search_hashtable_timer);
         if constexpr (!is_right_semi_anti_join) {
@@ -348,28 +348,28 @@ Status ProcessHashTableProbe<JoinOpType>::do_process(HashTableType& hash_table_c
                 } else {
                     DCHECK(!is_mark_join);
                     if (find_result.is_found()) {
-                        auto& mapped = find_result.get_mapped();
+			auto& mapped = find_result.get_mapped().pointer;
                         // TODO: Iterators are currently considered to be a heavy operation and have a certain impact on performance.
                         // We should rethink whether to use this iterator mode in the future. Now just opt the one row case
-                        if (mapped.get_row_count() == 1) {
-                            if constexpr (std::is_same_v<Mapped, RowRefListWithFlag>) {
-                                mapped.visited = true;
+                        if (mapped->get_row_count() == 1) {
+                            if constexpr (std::is_same_v<Mapped, RowRefListWithFlagRef>) {
+                                mapped->visited = true;
                             }
 
                             if constexpr (!is_right_semi_anti_join) {
                                 if (LIKELY(current_offset < _build_block_rows.size())) {
-                                    _build_block_offsets[current_offset] = mapped.block_offset;
-                                    _build_block_rows[current_offset] = mapped.row_num;
+                                    _build_block_offsets[current_offset] = mapped->block_offset;
+                                    _build_block_rows[current_offset] = mapped->row_num;
                                 } else {
-                                    _build_block_offsets.emplace_back(mapped.block_offset);
-                                    _build_block_rows.emplace_back(mapped.row_num);
+                                    _build_block_offsets.emplace_back(mapped->block_offset);
+                                    _build_block_rows.emplace_back(mapped->row_num);
                                 }
                                 ++current_offset;
                             }
                             ++probe_index;
                         } else {
                             if constexpr (!is_right_semi_anti_join) {
-                                auto it = mapped.begin();
+                                auto it = mapped->begin();
                                 for (; it.ok() && current_offset < _batch_size; ++it) {
                                     if (LIKELY(current_offset < _build_block_rows.size())) {
                                         _build_block_offsets[current_offset] = it->block_offset;
@@ -392,8 +392,8 @@ Status ProcessHashTableProbe<JoinOpType>::do_process(HashTableType& hash_table_c
                             } else {
                                 ++probe_index;
                             }
-                            if constexpr (std::is_same_v<Mapped, RowRefListWithFlag>) {
-                                mapped.visited = true;
+                            if constexpr (std::is_same_v<Mapped, RowRefListWithFlagRef>) {
+                                mapped->visited = true;
                             }
                         }
                     } else {
@@ -466,7 +466,7 @@ Status ProcessHashTableProbe<JoinOpType>::do_process_with_other_join_conjuncts(
 
     using KeyGetter = typename HashTableType::State;
     using Mapped = typename HashTableType::Mapped;
-    if constexpr (std::is_same_v<Mapped, RowRefListWithFlags>) {
+    if constexpr (std::is_same_v<Mapped, RowRefListWithFlagsRef>) {
         constexpr auto probe_all =
                 JoinOpType == TJoinOp::LEFT_OUTER_JOIN || JoinOpType == TJoinOp::FULL_OUTER_JOIN;
         KeyGetter key_getter(probe_raw_ptrs, _join_context->_probe_key_sz, nullptr);
@@ -499,7 +499,7 @@ Status ProcessHashTableProbe<JoinOpType>::do_process_with_other_join_conjuncts(
         bool is_the_last_sub_block = false;
         size_t probe_size = 0;
         auto& probe_row_match_iter =
-                std::get<ForwardIterator<Mapped>>(*_join_context->_probe_row_match_iter);
+                std::get<ForwardIterator<typename Mapped::RefType>>(*_join_context->_probe_row_match_iter);
         if (probe_row_match_iter.ok()) {
             SCOPED_TIMER(_search_hashtable_timer);
             auto origin_offset = current_offset;
@@ -580,20 +580,20 @@ Status ProcessHashTableProbe<JoinOpType>::do_process_with_other_join_conjuncts(
 
                 auto current_probe_index = probe_index;
                 if (find_result.is_found()) {
-                    auto& mapped = find_result.get_mapped();
+                    auto& mapped = find_result.get_mapped().pointer;
                     auto origin_offset = current_offset;
                     // TODO: Iterators are currently considered to be a heavy operation and have a certain impact on performance.
                     // We should rethink whether to use this iterator mode in the future. Now just opt the one row case
-                    if (mapped.get_row_count() == 1) {
+                    if (mapped->get_row_count() == 1) {
                         if (LIKELY(current_offset < _build_block_rows.size())) {
-                            _build_block_offsets[current_offset] = mapped.block_offset;
-                            _build_block_rows[current_offset] = mapped.row_num;
+                            _build_block_offsets[current_offset] = mapped->block_offset;
+                            _build_block_rows[current_offset] = mapped->row_num;
                         } else {
-                            _build_block_offsets.emplace_back(mapped.block_offset);
-                            _build_block_rows.emplace_back(mapped.row_num);
+                            _build_block_offsets.emplace_back(mapped->block_offset);
+                            _build_block_rows.emplace_back(mapped->row_num);
                         }
                         ++current_offset;
-                        visited_map.emplace_back(&mapped.visited);
+                        visited_map.emplace_back(&mapped->visited);
                         ++probe_index;
                     } else {
                         // For mark join, if euqual-matched tuple count for one probe row
@@ -601,7 +601,7 @@ Status ProcessHashTableProbe<JoinOpType>::do_process_with_other_join_conjuncts(
                         // split them into multiple sub blocks and handle them, keep the original
                         // logic for now.
                         if (is_mark_join) {
-                            for (auto it = mapped.begin(); it.ok(); ++it) {
+                            for (auto it = mapped->begin(); it.ok(); ++it) {
                                 if (LIKELY(current_offset < _build_block_rows.size())) {
                                     _build_block_offsets[current_offset] = it->block_offset;
                                     _build_block_rows[current_offset] = it->row_num;
@@ -615,7 +615,7 @@ Status ProcessHashTableProbe<JoinOpType>::do_process_with_other_join_conjuncts(
                             ++probe_index;
                         } else {
                             auto multi_match_last_offset = current_offset;
-                            auto it = mapped.begin();
+                            auto it = mapped->begin();
                             // breaks if row count exceeds batch_size
                             for (; it.ok() && current_offset < _batch_size; ++it) {
                                 if (LIKELY(current_offset < _build_block_rows.size())) {
@@ -1089,8 +1089,8 @@ Status ProcessHashTableProbe<JoinOpType>::process_data_in_hashtable(HashTableTyp
                                                                     bool* eos) {
     using Mapped = typename HashTableType::Mapped;
     SCOPED_TIMER(_probe_process_hashtable_timer);
-    if constexpr (std::is_same_v<Mapped, RowRefListWithFlag> ||
-                  std::is_same_v<Mapped, RowRefListWithFlags>) {
+    if constexpr (std::is_same_v<Mapped, RowRefListWithFlagRef> ||
+                  std::is_same_v<Mapped, RowRefListWithFlagsRef>) {
         hash_table_ctx.init_once();
         auto& mcol = mutable_block.mutable_columns();
 
@@ -1103,14 +1103,14 @@ Status ProcessHashTableProbe<JoinOpType>::process_data_in_hashtable(HashTableTyp
         auto& iter = hash_table_ctx.iter;
         auto block_size = 0;
         auto& visited_iter =
-                std::get<ForwardIterator<Mapped>>(*_join_context->_outer_join_pull_visited_iter);
+                std::get<ForwardIterator<typename Mapped::RefType>>(*_join_context->_outer_join_pull_visited_iter);
         _build_blocks_locs.resize(_batch_size);
         auto register_build_loc = [&](int8_t offset, int32_t row_nums) {
             _build_blocks_locs[block_size++] = std::pair<int8_t, int>(offset, row_nums);
         };
 
         if (visited_iter.ok()) {
-            if constexpr (std::is_same_v<Mapped, RowRefListWithFlag>) {
+            if constexpr (std::is_same_v<Mapped, RowRefListWithFlagRef>) {
                 for (; visited_iter.ok() && block_size < _batch_size; ++visited_iter) {
                     register_build_loc(visited_iter->block_offset, visited_iter->row_num);
                 }
@@ -1133,11 +1133,11 @@ Status ProcessHashTableProbe<JoinOpType>::process_data_in_hashtable(HashTableTyp
         }
 
         for (; iter != hash_table_ctx.hash_table.end() && block_size < _batch_size; ++iter) {
-            auto& mapped = iter->get_second();
-            if constexpr (std::is_same_v<Mapped, RowRefListWithFlag>) {
-                if (mapped.visited) {
+            auto& mapped = iter->get_second().pointer;
+            if constexpr (std::is_same_v<Mapped, RowRefListWithFlagRef>) {
+                if (mapped->visited) {
                     if constexpr (JoinOpType == TJoinOp::RIGHT_SEMI_JOIN) {
-                        visited_iter = mapped.begin();
+                        visited_iter = mapped->begin();
                         for (; visited_iter.ok() && block_size < _batch_size; ++visited_iter) {
                             register_build_loc(visited_iter->block_offset, visited_iter->row_num);
                         }
@@ -1148,7 +1148,7 @@ Status ProcessHashTableProbe<JoinOpType>::process_data_in_hashtable(HashTableTyp
                     }
                 } else {
                     if constexpr (JoinOpType != TJoinOp::RIGHT_SEMI_JOIN) {
-                        visited_iter = mapped.begin();
+                        visited_iter = mapped->begin();
                         for (; visited_iter.ok() && block_size < _batch_size; ++visited_iter) {
                             register_build_loc(visited_iter->block_offset, visited_iter->row_num);
                         }
@@ -1159,7 +1159,7 @@ Status ProcessHashTableProbe<JoinOpType>::process_data_in_hashtable(HashTableTyp
                     }
                 }
             } else {
-                visited_iter = mapped.begin();
+                visited_iter = mapped->begin();
                 for (; visited_iter.ok() && block_size < _batch_size; ++visited_iter) {
                     if constexpr (JoinOpType == TJoinOp::RIGHT_SEMI_JOIN) {
                         if (visited_iter->visited) {
@@ -1306,44 +1306,44 @@ struct ExtractType<T(U)> {
             MutableColumns & mcol, int column_offset, int column_length,                   \
             const std::vector<bool>& output_slot_flags, int size);                         \
                                                                                            \
-    INSTANTIATION(JoinOpType, (SerializedHashTableContext<RowRefList>));                   \
-    INSTANTIATION(JoinOpType, (I8HashTableContext<RowRefList>));                           \
-    INSTANTIATION(JoinOpType, (I16HashTableContext<RowRefList>));                          \
-    INSTANTIATION(JoinOpType, (I32HashTableContext<RowRefList>));                          \
-    INSTANTIATION(JoinOpType, (I64HashTableContext<RowRefList>));                          \
-    INSTANTIATION(JoinOpType, (I128HashTableContext<RowRefList>));                         \
-    INSTANTIATION(JoinOpType, (I256HashTableContext<RowRefList>));                         \
-    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<true, RowRefList>));            \
-    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<false, RowRefList>));           \
-    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<true, RowRefList>));           \
-    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<false, RowRefList>));          \
-    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<true, RowRefList>));           \
-    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<false, RowRefList>));          \
-    INSTANTIATION(JoinOpType, (SerializedHashTableContext<RowRefListWithFlag>));           \
-    INSTANTIATION(JoinOpType, (I8HashTableContext<RowRefListWithFlag>));                   \
-    INSTANTIATION(JoinOpType, (I16HashTableContext<RowRefListWithFlag>));                  \
-    INSTANTIATION(JoinOpType, (I32HashTableContext<RowRefListWithFlag>));                  \
-    INSTANTIATION(JoinOpType, (I64HashTableContext<RowRefListWithFlag>));                  \
-    INSTANTIATION(JoinOpType, (I128HashTableContext<RowRefListWithFlag>));                 \
-    INSTANTIATION(JoinOpType, (I256HashTableContext<RowRefListWithFlag>));                 \
-    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<true, RowRefListWithFlag>));    \
-    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<false, RowRefListWithFlag>));   \
-    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<true, RowRefListWithFlag>));   \
-    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<false, RowRefListWithFlag>));  \
-    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<true, RowRefListWithFlag>));   \
-    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<false, RowRefListWithFlag>));  \
-    INSTANTIATION(JoinOpType, (SerializedHashTableContext<RowRefListWithFlags>));          \
-    INSTANTIATION(JoinOpType, (I8HashTableContext<RowRefListWithFlags>));                  \
-    INSTANTIATION(JoinOpType, (I16HashTableContext<RowRefListWithFlags>));                 \
-    INSTANTIATION(JoinOpType, (I32HashTableContext<RowRefListWithFlags>));                 \
-    INSTANTIATION(JoinOpType, (I64HashTableContext<RowRefListWithFlags>));                 \
-    INSTANTIATION(JoinOpType, (I128HashTableContext<RowRefListWithFlags>));                \
-    INSTANTIATION(JoinOpType, (I256HashTableContext<RowRefListWithFlags>));                \
-    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<true, RowRefListWithFlags>));   \
-    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<false, RowRefListWithFlags>));  \
-    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<true, RowRefListWithFlags>));  \
-    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<false, RowRefListWithFlags>)); \
-    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<true, RowRefListWithFlags>));  \
-    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<false, RowRefListWithFlags>))
+    INSTANTIATION(JoinOpType, (SerializedHashTableContext<RowRefListRef>));                   \
+    INSTANTIATION(JoinOpType, (I8HashTableContext<RowRefListRef>));                           \
+    INSTANTIATION(JoinOpType, (I16HashTableContext<RowRefListRef>));                          \
+    INSTANTIATION(JoinOpType, (I32HashTableContext<RowRefListRef>));                          \
+    INSTANTIATION(JoinOpType, (I64HashTableContext<RowRefListRef>));                          \
+    INSTANTIATION(JoinOpType, (I128HashTableContext<RowRefListRef>));                         \
+    INSTANTIATION(JoinOpType, (I256HashTableContext<RowRefListRef>));                         \
+    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<true, RowRefListRef>));            \
+    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<false, RowRefListRef>));           \
+    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<true, RowRefListRef>));           \
+    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<false, RowRefListRef>));          \
+    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<true, RowRefListRef>));           \
+    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<false, RowRefListRef>));          \
+    INSTANTIATION(JoinOpType, (SerializedHashTableContext<RowRefListWithFlagRef>));           \
+    INSTANTIATION(JoinOpType, (I8HashTableContext<RowRefListWithFlagRef>));                   \
+    INSTANTIATION(JoinOpType, (I16HashTableContext<RowRefListWithFlagRef>));                  \
+    INSTANTIATION(JoinOpType, (I32HashTableContext<RowRefListWithFlagRef>));                  \
+    INSTANTIATION(JoinOpType, (I64HashTableContext<RowRefListWithFlagRef>));                  \
+    INSTANTIATION(JoinOpType, (I128HashTableContext<RowRefListWithFlagRef>));                 \
+    INSTANTIATION(JoinOpType, (I256HashTableContext<RowRefListWithFlagRef>));                 \
+    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<true, RowRefListWithFlagRef>));    \
+    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<false, RowRefListWithFlagRef>));   \
+    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<true, RowRefListWithFlagRef>));   \
+    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<false, RowRefListWithFlagRef>));  \
+    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<true, RowRefListWithFlagRef>));   \
+    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<false, RowRefListWithFlagRef>));  \
+    INSTANTIATION(JoinOpType, (SerializedHashTableContext<RowRefListWithFlagsRef>));          \
+    INSTANTIATION(JoinOpType, (I8HashTableContext<RowRefListWithFlagsRef>));                  \
+    INSTANTIATION(JoinOpType, (I16HashTableContext<RowRefListWithFlagsRef>));                 \
+    INSTANTIATION(JoinOpType, (I32HashTableContext<RowRefListWithFlagsRef>));                 \
+    INSTANTIATION(JoinOpType, (I64HashTableContext<RowRefListWithFlagsRef>));                 \
+    INSTANTIATION(JoinOpType, (I128HashTableContext<RowRefListWithFlagsRef>));                \
+    INSTANTIATION(JoinOpType, (I256HashTableContext<RowRefListWithFlagsRef>));                \
+    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<true, RowRefListWithFlagsRef>));   \
+    INSTANTIATION(JoinOpType, (I64FixedKeyHashTableContext<false, RowRefListWithFlagsRef>));  \
+    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<true, RowRefListWithFlagsRef>));  \
+    INSTANTIATION(JoinOpType, (I128FixedKeyHashTableContext<false, RowRefListWithFlagsRef>)); \
+    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<true, RowRefListWithFlagsRef>));  \
+    INSTANTIATION(JoinOpType, (I256FixedKeyHashTableContext<false, RowRefListWithFlagsRef>))
 
 } // namespace doris::vectorized

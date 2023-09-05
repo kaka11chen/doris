@@ -114,7 +114,8 @@ public:
         if (_is_partitioned) {
             for (auto i = 0u; i < this->NUM_LEVEL1_SUB_TABLES; ++i) {
                 for (auto& v : this->level1_sub_tables[i]) {
-                    count += v.get_second().get_row_count();
+//                    count += v.get_second().get_row_count();
+                    count += v.get_second().pointer->get_row_count();
                 }
             }
         } else {

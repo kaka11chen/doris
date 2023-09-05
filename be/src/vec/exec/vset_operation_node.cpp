@@ -66,37 +66,37 @@ struct HashTableBuild {
               _state(state) {}
 
     Status operator()(HashTableContext& hash_table_ctx) {
-        using KeyGetter = typename HashTableContext::State;
-        using Mapped = typename HashTableContext::Mapped;
-        int64_t old_bucket_bytes = hash_table_ctx.hash_table.get_buffer_size_in_bytes();
+//        using KeyGetter = typename HashTableContext::State;
+//        using Mapped = typename HashTableContext::Mapped;
+//        int64_t old_bucket_bytes = hash_table_ctx.hash_table.get_buffer_size_in_bytes();
+//
+//        Defer defer {[&]() {
+//            int64_t bucket_bytes = hash_table_ctx.hash_table.get_buffer_size_in_bytes();
+//            _operation_node->_mem_used += bucket_bytes - old_bucket_bytes;
+//        }};
+//
+//        KeyGetter key_getter(_build_raw_ptrs, _operation_node->_build_key_sz, nullptr);
+//
+//        if constexpr (ColumnsHashing::IsPreSerializedKeysHashMethodTraits<KeyGetter>::value) {
+//            hash_table_ctx.serialize_keys(_build_raw_ptrs, _rows);
+//            key_getter.set_serialized_keys(hash_table_ctx.keys.data());
+//        }
+//
+//        for (size_t k = 0; k < _rows; ++k) {
+//            if (k % 65536 == 0) {
+//                RETURN_IF_CANCELLED(_state);
+//            }
+//            auto emplace_result = key_getter.emplace_key(hash_table_ctx.hash_table, k,
+//                                                         *(_operation_node->_arena));
+//
+//            if (k + 1 < _rows) {
+//                key_getter.prefetch(hash_table_ctx.hash_table, k + 1, *(_operation_node->_arena));
+//            }
 
-        Defer defer {[&]() {
-            int64_t bucket_bytes = hash_table_ctx.hash_table.get_buffer_size_in_bytes();
-            _operation_node->_mem_used += bucket_bytes - old_bucket_bytes;
-        }};
-
-        KeyGetter key_getter(_build_raw_ptrs, _operation_node->_build_key_sz, nullptr);
-
-        if constexpr (ColumnsHashing::IsPreSerializedKeysHashMethodTraits<KeyGetter>::value) {
-            hash_table_ctx.serialize_keys(_build_raw_ptrs, _rows);
-            key_getter.set_serialized_keys(hash_table_ctx.keys.data());
-        }
-
-        for (size_t k = 0; k < _rows; ++k) {
-            if (k % 65536 == 0) {
-                RETURN_IF_CANCELLED(_state);
-            }
-            auto emplace_result = key_getter.emplace_key(hash_table_ctx.hash_table, k,
-                                                         *(_operation_node->_arena));
-
-            if (k + 1 < _rows) {
-                key_getter.prefetch(hash_table_ctx.hash_table, k + 1, *(_operation_node->_arena));
-            }
-
-            if (emplace_result.is_inserted()) { //only inserted once as the same key, others skip
-                new (&emplace_result.get_mapped()) Mapped({k, _offset});
-            }
-        }
+//            if (emplace_result.is_inserted()) { //only inserted once as the same key, others skip
+//                new (&emplace_result.get_mapped()) Mapped({k, _offset});
+//            }
+//        }
         return Status::OK();
     }
 
@@ -295,16 +295,16 @@ void VSetOperationNode<is_intersect>::hash_table_init() {
         switch (_child_expr_lists[0][0]->root()->result_type()) {
         case TYPE_BOOLEAN:
         case TYPE_TINYINT:
-            _hash_table_variants->emplace<I8HashTableContext<RowRefListWithFlags>>();
+            _hash_table_variants->emplace<I8HashTableContext<RowRefListWithFlagsRef>>();
             break;
         case TYPE_SMALLINT:
-            _hash_table_variants->emplace<I16HashTableContext<RowRefListWithFlags>>();
+            _hash_table_variants->emplace<I16HashTableContext<RowRefListWithFlagsRef>>();
             break;
         case TYPE_INT:
         case TYPE_FLOAT:
         case TYPE_DATEV2:
         case TYPE_DECIMAL32:
-            _hash_table_variants->emplace<I32HashTableContext<RowRefListWithFlags>>();
+            _hash_table_variants->emplace<I32HashTableContext<RowRefListWithFlagsRef>>();
             break;
         case TYPE_BIGINT:
         case TYPE_DOUBLE:
@@ -312,15 +312,15 @@ void VSetOperationNode<is_intersect>::hash_table_init() {
         case TYPE_DATE:
         case TYPE_DECIMAL64:
         case TYPE_DATETIMEV2:
-            _hash_table_variants->emplace<I64HashTableContext<RowRefListWithFlags>>();
+            _hash_table_variants->emplace<I64HashTableContext<RowRefListWithFlagsRef>>();
             break;
         case TYPE_LARGEINT:
         case TYPE_DECIMALV2:
         case TYPE_DECIMAL128I:
-            _hash_table_variants->emplace<I128HashTableContext<RowRefListWithFlags>>();
+            _hash_table_variants->emplace<I128HashTableContext<RowRefListWithFlagsRef>>();
             break;
         default:
-            _hash_table_variants->emplace<SerializedHashTableContext<RowRefListWithFlags>>();
+            _hash_table_variants->emplace<SerializedHashTableContext<RowRefListWithFlagsRef>>();
         }
         return;
     }
@@ -355,28 +355,28 @@ void VSetOperationNode<is_intersect>::hash_table_init() {
         if (has_null) {
             if (bitmap_size + key_byte_size <= sizeof(UInt64)) {
                 _hash_table_variants
-                        ->emplace<I64FixedKeyHashTableContext<true, RowRefListWithFlags>>();
+                        ->emplace<I64FixedKeyHashTableContext<true, RowRefListWithFlagsRef>>();
             } else if (bitmap_size + key_byte_size <= sizeof(UInt128)) {
                 _hash_table_variants
-                        ->emplace<I128FixedKeyHashTableContext<true, RowRefListWithFlags>>();
+                        ->emplace<I128FixedKeyHashTableContext<true, RowRefListWithFlagsRef>>();
             } else {
                 _hash_table_variants
-                        ->emplace<I256FixedKeyHashTableContext<true, RowRefListWithFlags>>();
+                        ->emplace<I256FixedKeyHashTableContext<true, RowRefListWithFlagsRef>>();
             }
         } else {
             if (key_byte_size <= sizeof(UInt64)) {
                 _hash_table_variants
-                        ->emplace<I64FixedKeyHashTableContext<false, RowRefListWithFlags>>();
+                        ->emplace<I64FixedKeyHashTableContext<false, RowRefListWithFlagsRef>>();
             } else if (key_byte_size <= sizeof(UInt128)) {
                 _hash_table_variants
-                        ->emplace<I128FixedKeyHashTableContext<false, RowRefListWithFlags>>();
+                        ->emplace<I128FixedKeyHashTableContext<false, RowRefListWithFlagsRef>>();
             } else {
                 _hash_table_variants
-                        ->emplace<I256FixedKeyHashTableContext<false, RowRefListWithFlags>>();
+                        ->emplace<I256FixedKeyHashTableContext<false, RowRefListWithFlagsRef>>();
             }
         }
     } else {
-        _hash_table_variants->emplace<SerializedHashTableContext<RowRefListWithFlags>>();
+        _hash_table_variants->emplace<SerializedHashTableContext<RowRefListWithFlagsRef>>();
     }
 }
 
@@ -495,7 +495,8 @@ void VSetOperationNode<is_intersect>::add_result_columns(RowRefListWithFlags& va
                                                          int& block_size) {
     auto it = value.begin();
     for (auto idx = _build_col_idx.begin(); idx != _build_col_idx.end(); ++idx) {
-        auto& column = *_build_blocks[it->block_offset].get_by_position(idx->first).column;
+//        auto& column = *_build_blocks[it->block_offset].get_by_position(idx->first).column;
+        auto& column = *_build_blocks[0].get_by_position(idx->first).column;
         if (_mutable_cols[idx->second]->is_nullable() xor column.is_nullable()) {
             DCHECK(_mutable_cols[idx->second]->is_nullable());
             ((ColumnNullable*)(_mutable_cols[idx->second].get()))
@@ -673,66 +674,66 @@ void VSetOperationNode<is_intersect>::release_mem() {
 
 template <bool is_intersect>
 void VSetOperationNode<is_intersect>::refresh_hash_table() {
-    std::visit(
-            [&](auto&& arg) {
-                using HashTableCtxType = std::decay_t<decltype(arg)>;
-                if constexpr (!std::is_same_v<HashTableCtxType, std::monostate>) {
-                    if constexpr (std::is_same_v<typename HashTableCtxType::Mapped,
-                                                 RowRefListWithFlags>) {
-                        HashTableCtxType tmp_hash_table;
-                        bool is_need_shrink =
-                                arg.hash_table.should_be_shrink(_valid_element_in_hash_tbl);
-                        if (is_need_shrink) {
-                            tmp_hash_table.hash_table.init_buf_size(
-                                    _valid_element_in_hash_tbl / arg.hash_table.get_factor() + 1);
-                        }
-
-                        arg.init_once();
-                        auto& iter = arg.iter;
-                        auto iter_end = arg.hash_table.end();
-                        while (iter != iter_end) {
-                            auto& mapped = iter->get_second();
-                            auto it = mapped.begin();
-
-                            if constexpr (is_intersect) { //intersected
-                                if (it->visited) {
-                                    it->visited = false;
-                                    if (is_need_shrink) {
-                                        tmp_hash_table.hash_table.insert(iter->get_value());
-                                    }
-                                    ++iter;
-                                } else {
-                                    if (!is_need_shrink) {
-                                        arg.hash_table.delete_zero_key(iter->get_first());
-                                        // the ++iter would check if the current key is zero. if it does, the iterator will be moved to the container's head.
-                                        // so we do ++iter before set_zero to make the iterator move to next valid key correctly.
-                                        auto iter_prev = iter;
-                                        ++iter;
-                                        iter_prev->set_zero();
-                                    } else {
-                                        ++iter;
-                                    }
-                                }
-                            } else { //except
-                                if (!it->visited && is_need_shrink) {
-                                    tmp_hash_table.hash_table.insert(iter->get_value());
-                                }
-                                ++iter;
-                            }
-                        }
-
-                        arg.inited = false;
-                        if (is_need_shrink) {
-                            arg.hash_table = std::move(tmp_hash_table.hash_table);
-                        }
-                    } else {
-                        LOG(FATAL) << "FATAL: Invalid RowRefList";
-                    }
-                } else {
-                    LOG(FATAL) << "FATAL: uninited hash table";
-                }
-            },
-            *_hash_table_variants);
+//    std::visit(
+//            [&](auto&& arg) {
+//                using HashTableCtxType = std::decay_t<decltype(arg)>;
+//                if constexpr (!std::is_same_v<HashTableCtxType, std::monostate>) {
+//                    if constexpr (std::is_same_v<typename HashTableCtxType::Mapped,
+//                                                 RowRefListWithFlags>) {
+//                        HashTableCtxType tmp_hash_table;
+//                        bool is_need_shrink =
+//                                arg.hash_table.should_be_shrink(_valid_element_in_hash_tbl);
+//                        if (is_need_shrink) {
+//                            tmp_hash_table.hash_table.init_buf_size(
+//                                    _valid_element_in_hash_tbl / arg.hash_table.get_factor() + 1);
+//                        }
+//
+//                        arg.init_once();
+//                        auto& iter = arg.iter;
+//                        auto iter_end = arg.hash_table.end();
+//                        while (iter != iter_end) {
+//                            auto& mapped = iter->get_second();
+//                            auto it = mapped.begin();
+//
+//                            if constexpr (is_intersect) { //intersected
+//                                if (it->visited) {
+//                                    it->visited = false;
+//                                    if (is_need_shrink) {
+//                                        tmp_hash_table.hash_table.insert(iter->get_value());
+//                                    }
+//                                    ++iter;
+//                                } else {
+//                                    if (!is_need_shrink) {
+//                                        arg.hash_table.delete_zero_key(iter->get_first());
+//                                        // the ++iter would check if the current key is zero. if it does, the iterator will be moved to the container's head.
+//                                        // so we do ++iter before set_zero to make the iterator move to next valid key correctly.
+//                                        auto iter_prev = iter;
+//                                        ++iter;
+//                                        iter_prev->set_zero();
+//                                    } else {
+//                                        ++iter;
+//                                    }
+//                                }
+//                            } else { //except
+//                                if (!it->visited && is_need_shrink) {
+//                                    tmp_hash_table.hash_table.insert(iter->get_value());
+//                                }
+//                                ++iter;
+//                            }
+//                        }
+//
+//                        arg.inited = false;
+//                        if (is_need_shrink) {
+//                            arg.hash_table = std::move(tmp_hash_table.hash_table);
+//                        }
+//                    } else {
+//                        LOG(FATAL) << "FATAL: Invalid RowRefList";
+//                    }
+//                } else {
+//                    LOG(FATAL) << "FATAL: uninited hash table";
+//                }
+//            },
+//            *_hash_table_variants);
 }
 
 template <bool is_intersected>
@@ -740,38 +741,38 @@ template <typename HashTableContext>
 Status VSetOperationNode<is_intersected>::get_data_in_hashtable(HashTableContext& hash_table_ctx,
                                                                 Block* output_block,
                                                                 const int batch_size, bool* eos) {
-    hash_table_ctx.init_once();
-    int left_col_len = _left_table_data_types.size();
-    auto& iter = hash_table_ctx.iter;
-    auto block_size = 0;
-
-    if constexpr (std::is_same_v<typename HashTableContext::Mapped, RowRefListWithFlags>) {
-        for (; iter != hash_table_ctx.hash_table.end() && block_size < batch_size; ++iter) {
-            auto& value = iter->get_second();
-            auto it = value.begin();
-            if constexpr (is_intersected) {
-                if (it->visited) { //intersected: have done probe, so visited values it's the result
-                    add_result_columns(value, block_size);
-                }
-            } else {
-                if (!it->visited) { //except: haven't visited values it's the needed result
-                    add_result_columns(value, block_size);
-                }
-            }
-        }
-    } else {
-        LOG(FATAL) << "Invalid RowRefListType!";
-    }
-
-    *eos = iter == hash_table_ctx.hash_table.end();
-    if (!output_block->mem_reuse()) {
-        for (int i = 0; i < left_col_len; ++i) {
-            output_block->insert(ColumnWithTypeAndName(std::move(_mutable_cols[i]),
-                                                       _left_table_data_types[i], ""));
-        }
-    } else {
-        _mutable_cols.clear();
-    }
+//    hash_table_ctx.init_once();
+//    int left_col_len = _left_table_data_types.size();
+//    auto& iter = hash_table_ctx.iter;
+//    auto block_size = 0;
+//
+//    if constexpr (std::is_same_v<typename HashTableContext::Mapped, RowRefListWithFlags>) {
+//        for (; iter != hash_table_ctx.hash_table.end() && block_size < batch_size; ++iter) {
+//            auto& value = iter->get_second();
+//            auto it = value.begin();
+//            if constexpr (is_intersected) {
+//                if (it->visited) { //intersected: have done probe, so visited values it's the result
+//                    add_result_columns(value, block_size);
+//                }
+//            } else {
+//                if (!it->visited) { //except: haven't visited values it's the needed result
+//                    add_result_columns(value, block_size);
+//                }
+//            }
+//        }
+//    } else {
+//        LOG(FATAL) << "Invalid RowRefListType!";
+//    }
+//
+//    *eos = iter == hash_table_ctx.hash_table.end();
+//    if (!output_block->mem_reuse()) {
+//        for (int i = 0; i < left_col_len; ++i) {
+//            output_block->insert(ColumnWithTypeAndName(std::move(_mutable_cols[i]),
+//                                                       _left_table_data_types[i], ""));
+//        }
+//    } else {
+//        _mutable_cols.clear();
+//    }
 
     return Status::OK();
 }

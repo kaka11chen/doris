@@ -200,7 +200,8 @@ public:
     size_t get_size() {
         size_t count = 0;
         for (auto& v : *this) {
-            count += v.get_second().get_row_count();
+//            count += v.get_second().get_row_count();
+            count += v.get_second().pointer->get_row_count();
         }
         return count;
     }
