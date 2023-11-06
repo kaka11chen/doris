@@ -252,6 +252,7 @@ import org.apache.doris.thrift.TStorageMedium;
 import org.apache.doris.transaction.DbUsedDataQuotaInfoCollector;
 import org.apache.doris.transaction.GlobalTransactionMgr;
 import org.apache.doris.transaction.PublishVersionDaemon;
+import org.apache.doris.trino.connector.LocalQueryRunner;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
@@ -264,6 +265,8 @@ import com.google.common.collect.Queues;
 import com.sleepycat.je.rep.InsufficientLogException;
 import com.sleepycat.je.rep.NetworkRestore;
 import com.sleepycat.je.rep.NetworkRestoreConfig;
+import io.trino.Session;
+import io.trino.testing.TestingSession;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
@@ -490,6 +493,8 @@ public class Env {
 
     private HiveTransactionMgr hiveTransactionMgr;
 
+    private LocalQueryRunner localQueryRunner;
+
     public List<TFrontendInfo> getFrontendInfos() {
         List<TFrontendInfo> res = new ArrayList<>();
 
@@ -590,6 +595,10 @@ public class Env {
 
     public BinlogManager getBinlogManager() {
         return binlogManager;
+    }
+
+    public LocalQueryRunner getLocalQueryRunner() {
+        return localQueryRunner;
     }
 
     private static class SingletonHolder {
@@ -723,6 +732,9 @@ public class Env {
         this.binlogGcer = new BinlogGcer();
         this.columnIdFlusher = new ColumnIdFlushDaemon();
         this.queryCancelWorker = new QueryCancelWorker(systemInfo);
+        Session session = TestingSession.testSessionBuilder()
+                .build();
+        this.localQueryRunner = LocalQueryRunner.builder(session).build();
     }
 
     public static void destroyCheckpoint() {

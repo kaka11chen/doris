@@ -86,8 +86,11 @@ Status JniConnector::open(RuntimeState* state, RuntimeProfile* profile) {
     SCOPED_TIMER(_open_scanner_time);
     RETURN_IF_ERROR(_init_jni_scanner(env, batch_size));
     // Call org.apache.doris.common.jni.JniScanner#open
+    fprintf(stderr, "open\n");
     env->CallVoidMethod(_jni_scanner_obj, _jni_scanner_open);
+    fprintf(stderr, "open finished1\n");
     RETURN_ERROR_IF_EXC(env);
+    fprintf(stderr, "open finished2\n");
     return Status::OK();
 }
 
@@ -204,6 +207,7 @@ Status JniConnector::close() {
 }
 
 Status JniConnector::_init_jni_scanner(JNIEnv* env, int batch_size) {
+    fprintf(stderr, "_init_jni_scanner\n");
     RETURN_IF_ERROR(
             JniUtil::get_jni_scanner_class(env, _connector_class.c_str(), &_jni_scanner_cls));
     if (_jni_scanner_cls == NULL) {
@@ -236,6 +240,7 @@ Status JniConnector::_init_jni_scanner(JNIEnv* env, int batch_size) {
     _scanner_initialized = true;
     env->DeleteLocalRef(jni_scanner_obj);
     RETURN_ERROR_IF_EXC(env);
+    fprintf(stderr, "_init_jni_scanner finished\n");
     return Status::OK();
 }
 
