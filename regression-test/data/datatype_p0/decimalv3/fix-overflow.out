@@ -2,7 +2,3 @@
 -- !sql --
 1.1	\N	\N
 
--- !select_insert --
-a	\N
-b	0.00
-
