@@ -189,7 +189,7 @@ private:
 
     template <bool scale_left, bool scale_right>
     static ColumnPtr apply(const ColumnPtr& c0, const ColumnPtr& c1, CompareInt scale) {
-        auto c_res = ColumnUInt8::create();
+        //auto c_res = ColumnUInt8::create();
 
         if constexpr (_actual) {
             bool c0_is_const = is_column_const(*c0);
@@ -205,25 +205,34 @@ private:
                 return DataTypeUInt8().create_column_const(c0->size(), to_field(res));
             }
 
+            //ColumnUInt8::Container& vec_res = c_res->get_data();
+            //vec_res.resize(c0->size());
+	    auto c_res = ColumnUInt8::create(c0->size());
             ColumnUInt8::Container& vec_res = c_res->get_data();
-            vec_res.resize(c0->size());
 
             if (c0_is_const) {
-                const ColumnConst* c0_const = check_and_get_column_const<ColVecA>(c0.get());
+	        const ColumnConst* c0_const = static_cast<const ColumnConst*>(c0.get());
+                //const ColumnConst* c0_const = check_and_get_column_const<ColVecA>(c0.get());
                 A a = c0_const->template get_value<A>();
-                if (const ColVecB* c1_vec = check_and_get_column<ColVecB>(c1.get()))
-                    constant_vector<scale_left, scale_right>(a, c1_vec->get_data(), vec_res, scale);
-                else {
-                    LOG(FATAL) << "Wrong column in Decimal comparison";
-                }
+                const ColVecB* c1_vec = static_cast<const ColVecB*>(c1.get());
+                constant_vector<scale_left, scale_right>(a, c1_vec->get_data(), vec_res, scale);
+//                if (const ColVecB* c1_vec = check_and_get_column<ColVecB>(c1.get()))
+//                    constant_vector<scale_left, scale_right>(a, c1_vec->get_data(), vec_res, scale);
+//                else {
+//                    LOG(FATAL) << "Wrong column in Decimal comparison";
+//                }
             } else if (c1_is_const) {
-                const ColumnConst* c1_const = check_and_get_column_const<ColVecB>(c1.get());
-                B b = c1_const->template get_value<B>();
-                if (const ColVecA* c0_vec = check_and_get_column<ColVecA>(c0.get()))
-                    vector_constant<scale_left, scale_right>(c0_vec->get_data(), b, vec_res, scale);
-                else {
-                    LOG(FATAL) << "Wrong column in Decimal comparison";
-                }
+	        const ColumnConst* c1_const = static_cast<const ColumnConst*>(c1.get());
+//                const ColumnConst* c1_const = check_and_get_column_const<ColVecB>(c1.get());
+                //B b = c1_const->template get_value<B>();
+                B b = c1_const->get_field().get<B>();
+                const ColVecA* c0_vec = static_cast<const ColVecA*>(c0.get());
+		vector_constant<scale_left, scale_right>(c0_vec->get_data(), b, vec_res, scale);
+//                if (const ColVecA* c0_vec = check_and_get_column<ColVecA>(c0.get()))
+//                    vector_constant<scale_left, scale_right>(c0_vec->get_data(), b, vec_res, scale);
+//                else {
+//                    LOG(FATAL) << "Wrong column in Decimal comparison";
+//                }
             } else {
                 if (const ColVecA* c0_vec = check_and_get_column<ColVecA>(c0.get())) {
                     if (const ColVecB* c1_vec = check_and_get_column<ColVecB>(c1.get()))
@@ -236,13 +245,16 @@ private:
                     LOG(FATAL) << "Wrong column in Decimal comparison";
                 }
             }
-        }
+	    return c_res;
+        } else {
+		return ColumnUInt8::create();
+	}
 
-        return c_res;
+        //return c_res;
     }
 
     template <bool scale_left, bool scale_right>
-    static NO_INLINE UInt8 apply(A a, B b, CompareInt scale [[maybe_unused]]) {
+    static UInt8 apply(A a, B b, CompareInt scale [[maybe_unused]]) {
         CompareInt x = a;
         CompareInt y = b;
 
