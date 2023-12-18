@@ -33,6 +33,8 @@
 #include "vec/exec/format/parquet/parquet_common.h"
 #include "vec/exprs/vexpr_fwd.h"
 #include "vparquet_column_reader.h"
+#include "olap/comparison_predicate.h"
+
 
 namespace cctz {
 class time_zone;
@@ -187,7 +189,7 @@ private:
     bool _can_filter_by_dict(int slot_id, const tparquet::ColumnMetaData& column_metadata);
     bool is_dictionary_encoded(const tparquet::ColumnMetaData& column_metadata);
     Status _rewrite_dict_predicates();
-    Status _rewrite_dict_conjuncts(std::vector<int32_t>& dict_codes, int slot_id, bool is_nullable);
+    Status _rewrite_dict_conjuncts(std::vector<int32_t>& dict_codes, int slot_id, const std::string& dict_filter_col_name, bool is_nullable);
     void _convert_dict_cols_to_string_cols(Block* block);
 
     io::FileReaderSPtr _file_reader;
@@ -206,7 +208,8 @@ private:
     int64_t _lazy_read_filtered_rows = 0;
     // If continuous batches are skipped, we can cache them to skip a whole page
     size_t _cached_filtered_rows = 0;
-    std::unique_ptr<IColumn::Filter> _pos_delete_filter_ptr;
+    std::unique_ptr<IColumn::Filter> _dict_filter_ptr = nullptr;
+    std::unique_ptr<IColumn::Filter> _pos_delete_filter_ptr = nullptr;
     int64_t _total_read_rows = 0;
     const TupleDescriptor* _tuple_descriptor = nullptr;
     const RowDescriptor* _row_descriptor = nullptr;
@@ -214,6 +217,7 @@ private:
     VExprContextSPtrs _not_single_slot_filter_conjuncts;
     const std::unordered_map<int, VExprContextSPtrs>* _slot_id_to_filter_conjuncts = nullptr;
     VExprContextSPtrs _dict_filter_conjuncts;
+    std::unordered_map<std::string, std::unique_ptr<ColumnPredicate>> _dict_col_name_to_predicates;
     VExprContextSPtrs _filter_conjuncts;
     // std::pair<col_name, slot_id>
     std::vector<std::pair<std::string, int>> _dict_filter_cols;

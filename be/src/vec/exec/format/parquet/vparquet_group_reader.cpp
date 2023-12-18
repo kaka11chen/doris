@@ -60,6 +60,8 @@
 #include "vec/exprs/vexpr_context.h"
 #include "vec/exprs/vliteral.h"
 #include "vec/exprs/vslot_ref.h"
+#include "vec/exec/format/comparison_predicate2.h"
+#include "vec/exec/format/in_list_predicate2.h"
 #include "vparquet_column_reader.h"
 
 namespace cctz {
@@ -330,10 +332,23 @@ Status RowGroupReader::next_batch(Block* block, size_t batch_size, size_t* read_
         }
         if (!_lazy_read_ctx.conjuncts.empty()) {
             std::vector<IColumn::Filter*> filters;
+
+            uint16_t rows = block->rows();
+            if (!_dict_col_name_to_predicates.empty()) {
+                _dict_filter_ptr.reset(new IColumn::Filter(rows, 1));
+                auto* __restrict dict_filter_data = _dict_filter_ptr->data();
+                auto iter = _dict_col_name_to_predicates.begin();
+                iter->second->evaluate_vec(*block->get_by_name(iter->first).column, rows, reinterpret_cast<bool*>(dict_filter_data));
+                while (++iter != _dict_col_name_to_predicates.end()) {
+                    iter->second->evaluate_and_vec(*block->get_by_name(iter->first).column, rows, reinterpret_cast<bool*>(dict_filter_data));
+                }
+                filters.push_back(_dict_filter_ptr.get());
+            }
+
             if (_position_delete_ctx.has_filter) {
                 filters.push_back(_pos_delete_filter_ptr.get());
             }
-            IColumn::Filter result_filter(block->rows(), 1);
+            IColumn::Filter result_filter(rows, 1);
             bool can_filter_all = false;
             RETURN_IF_ERROR_OR_CATCH_EXCEPTION(VExprContext::execute_conjuncts(
                     _filter_conjuncts, &filters, block, &result_filter, &can_filter_all));
@@ -464,6 +479,17 @@ Status RowGroupReader::_do_lazy_read(Block* block, size_t batch_size, size_t* re
         result_filter.assign(pre_read_rows, static_cast<unsigned char>(1));
         bool can_filter_all = false;
         std::vector<IColumn::Filter*> filters;
+        if (!_dict_col_name_to_predicates.empty()) {
+            _dict_filter_ptr.reset(new IColumn::Filter(pre_read_rows, 1));
+            auto* __restrict dict_filter_data = _dict_filter_ptr->data();
+            auto iter = _dict_col_name_to_predicates.begin();
+            iter->second->evaluate_vec(*block->get_by_name(iter->first).column, pre_read_rows, reinterpret_cast<bool*>(dict_filter_data));
+            while (++iter != _dict_col_name_to_predicates.end()) {
+                iter->second->evaluate_and_vec(*block->get_by_name(iter->first).column, pre_read_rows, reinterpret_cast<bool*>(dict_filter_data));
+            }
+            filters.push_back(_dict_filter_ptr.get());
+        }
+
         if (_position_delete_ctx.has_filter) {
             filters.push_back(_pos_delete_filter_ptr.get());
         }
@@ -474,7 +500,6 @@ Status RowGroupReader::_do_lazy_read(Block* block, size_t batch_size, size_t* re
         }
         RETURN_IF_ERROR(VExprContext::execute_conjuncts(filter_contexts, &filters, block,
                                                         &result_filter, &can_filter_all));
-
         if (_lazy_read_ctx.resize_first_column) {
             // We have to clean the first column to insert right data.
             block->get_by_position(0).column->assume_mutable()->clear();
@@ -538,15 +563,17 @@ Status RowGroupReader::_do_lazy_read(Block* block, size_t batch_size, size_t* re
 
     // filter data in predicate columns, and remove filter column
     if (select_vector.has_filter()) {
-        if (block->columns() == origin_column_num) {
-            // the whole row group has been filtered by _lazy_read_ctx.vconjunct_ctx, and batch_eof is
-            // generated from next batch, so the filter column is removed ahead.
-            DCHECK_EQ(block->rows(), 0);
-        } else {
+//        if (block->columns() == origin_column_num) {
+//            // the whole row group has been filtered by _lazy_read_ctx.vconjunct_ctx, and batch_eof is
+//            // generated from next batch, so the filter column is removed ahead.
+//            DCHECK_EQ(block->rows(), 0);
+//        } else {
+        if (block->rows() > 0) {
             RETURN_IF_CATCH_EXCEPTION(Block::filter_block_internal(
                     block, _lazy_read_ctx.all_predicate_col_ids, result_filter));
             Block::erase_useless_column(block, origin_column_num);
         }
+//        }
     } else {
         Block::erase_useless_column(block, origin_column_num);
     }
@@ -871,97 +898,103 @@ Status RowGroupReader::_rewrite_dict_predicates() {
         }
 
         // 4. Rewrite conjuncts.
-        static_cast<void>(_rewrite_dict_conjuncts(dict_codes, slot_id, dict_column->is_nullable()));
+        static_cast<void>(_rewrite_dict_conjuncts(dict_codes, slot_id, dict_filter_col_name, dict_column->is_nullable()));
         ++it;
     }
     return Status::OK();
 }
 
-Status RowGroupReader::_rewrite_dict_conjuncts(std::vector<int32_t>& dict_codes, int slot_id,
+Status RowGroupReader::_rewrite_dict_conjuncts(std::vector<int32_t>& dict_codes,  int slot_id, const std::string& dict_filter_col_name,
                                                bool is_nullable) {
     VExprSPtr root;
     if (dict_codes.size() == 1) {
-        {
-            TFunction fn;
-            TFunctionName fn_name;
-            fn_name.__set_db_name("");
-            fn_name.__set_function_name("eq");
-            fn.__set_name(fn_name);
-            fn.__set_binary_type(TFunctionBinaryType::BUILTIN);
-            std::vector<TTypeDesc> arg_types;
-            arg_types.push_back(create_type_desc(PrimitiveType::TYPE_INT));
-            arg_types.push_back(create_type_desc(PrimitiveType::TYPE_INT));
-            fn.__set_arg_types(arg_types);
-            fn.__set_ret_type(create_type_desc(PrimitiveType::TYPE_BOOLEAN));
-            fn.__set_has_var_args(false);
-
-            TExprNode texpr_node;
-            texpr_node.__set_type(create_type_desc(PrimitiveType::TYPE_BOOLEAN));
-            texpr_node.__set_node_type(TExprNodeType::BINARY_PRED);
-            texpr_node.__set_opcode(TExprOpcode::EQ);
-            texpr_node.__set_fn(fn);
-            texpr_node.__set_child_type(TPrimitiveType::INT);
-            texpr_node.__set_num_children(2);
-            texpr_node.__set_is_nullable(is_nullable);
-            root = VectorizedFnCall::create_shared(texpr_node);
-        }
-        {
-            SlotDescriptor* slot = nullptr;
-            const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
-            for (auto each : slots) {
-                if (each->id() == slot_id) {
-                    slot = each;
-                    break;
-                }
-            }
-            root->add_child(VSlotRef::create_shared(slot));
-        }
-        {
-            TExprNode texpr_node;
-            texpr_node.__set_node_type(TExprNodeType::INT_LITERAL);
-            texpr_node.__set_type(create_type_desc(TYPE_INT));
-            TIntLiteral int_literal;
-            int_literal.__set_value(dict_codes[0]);
-            texpr_node.__set_int_literal(int_literal);
-            texpr_node.__set_is_nullable(is_nullable);
-            root->add_child(VLiteral::create_shared(texpr_node));
-        }
+//        {
+//            TFunction fn;
+//            TFunctionName fn_name;
+//            fn_name.__set_db_name("");
+//            fn_name.__set_function_name("eq");
+//            fn.__set_name(fn_name);
+//            fn.__set_binary_type(TFunctionBinaryType::BUILTIN);
+//            std::vector<TTypeDesc> arg_types;
+//            arg_types.push_back(create_type_desc(PrimitiveType::TYPE_INT));
+//            arg_types.push_back(create_type_desc(PrimitiveType::TYPE_INT));
+//            fn.__set_arg_types(arg_types);
+//            fn.__set_ret_type(create_type_desc(PrimitiveType::TYPE_BOOLEAN));
+//            fn.__set_has_var_args(false);
+//
+//            TExprNode texpr_node;
+//            texpr_node.__set_type(create_type_desc(PrimitiveType::TYPE_BOOLEAN));
+//            texpr_node.__set_node_type(TExprNodeType::BINARY_PRED);
+//            texpr_node.__set_opcode(TExprOpcode::EQ);
+//            texpr_node.__set_fn(fn);
+//            texpr_node.__set_child_type(TPrimitiveType::INT);
+//            texpr_node.__set_num_children(2);
+//            texpr_node.__set_is_nullable(is_nullable);
+//            root = VectorizedFnCall::create_shared(texpr_node);
+//        }
+//        {
+//            SlotDescriptor* slot = nullptr;
+//            const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
+//            for (auto each : slots) {
+//                if (each->id() == slot_id) {
+//                    slot = each;
+//                    break;
+//                }
+//            }
+//            root->add_child(VSlotRef::create_shared(slot));
+//        }
+//        {
+//            TExprNode texpr_node;
+//            texpr_node.__set_node_type(TExprNodeType::INT_LITERAL);
+//            texpr_node.__set_type(create_type_desc(TYPE_INT));
+//            TIntLiteral int_literal;
+//            int_literal.__set_value(dict_codes[0]);
+//            texpr_node.__set_int_literal(int_literal);
+//            texpr_node.__set_is_nullable(is_nullable);
+//            root->add_child(VLiteral::create_shared(texpr_node));
+//        }
+        _dict_col_name_to_predicates[dict_filter_col_name] = std::make_unique<ComparisonPredicateBase2<TYPE_INT, PredicateType::EQ>>(0, dict_codes[0]);
     } else {
-        {
-            TTypeDesc type_desc = create_type_desc(PrimitiveType::TYPE_BOOLEAN);
-            TExprNode node;
-            node.__set_type(type_desc);
-            node.__set_node_type(TExprNodeType::IN_PRED);
-            node.in_predicate.__set_is_not_in(false);
-            node.__set_opcode(TExprOpcode::FILTER_IN);
-            // VdirectInPredicate assume is_nullable = false.
-            node.__set_is_nullable(false);
-
-            root = vectorized::VDirectInPredicate::create_shared(node);
-            std::shared_ptr<HybridSetBase> hybrid_set(
-                    create_set(PrimitiveType::TYPE_INT, dict_codes.size()));
-            for (int j = 0; j < dict_codes.size(); ++j) {
-                hybrid_set->insert(&dict_codes[j]);
-            }
-            static_cast<vectorized::VDirectInPredicate*>(root.get())->set_filter(hybrid_set);
-        }
-        {
-            SlotDescriptor* slot = nullptr;
-            const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
-            for (auto each : slots) {
-                if (each->id() == slot_id) {
-                    slot = each;
-                    break;
-                }
-            }
-            root->add_child(VSlotRef::create_shared(slot));
-        }
+//        {
+//            TTypeDesc type_desc = create_type_desc(PrimitiveType::TYPE_BOOLEAN);
+//            TExprNode node;
+//            node.__set_type(type_desc);
+//            node.__set_node_type(TExprNodeType::IN_PRED);
+//            node.in_predicate.__set_is_not_in(false);
+//            node.__set_opcode(TExprOpcode::FILTER_IN);
+//            // VdirectInPredicate assume is_nullable = false.
+//            node.__set_is_nullable(false);
+//
+//            root = vectorized::VDirectInPredicate::create_shared(node);
+//            std::shared_ptr<HybridSetBase> hybrid_set(
+//                    create_set(PrimitiveType::TYPE_INT, dict_codes.size()));
+//            for (int j = 0; j < dict_codes.size(); ++j) {
+//                hybrid_set->insert(&dict_codes[j]);
+//            }
+//            static_cast<vectorized::VDirectInPredicate*>(root.get())->set_filter(hybrid_set);
+//        }
+//        {
+//            SlotDescriptor* slot = nullptr;
+//            const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
+//            for (auto each : slots) {
+//                if (each->id() == slot_id) {
+//                    slot = each;
+//                    break;
+//                }
+//            }
+//            root->add_child(VSlotRef::create_shared(slot));
+//        }
+        auto converter = [](int32_t x) {
+            return x;
+        };
+        _dict_col_name_to_predicates[dict_filter_col_name].reset(
+                create_in_list_predicate2<TYPE_INT, PredicateType::IN_LIST, std::vector<int32_t>>(0, dict_codes, converter));
     }
-    VExprContextSPtr rewritten_conjunct_ctx = VExprContext::create_shared(root);
-    RETURN_IF_ERROR(rewritten_conjunct_ctx->prepare(_state, *_row_descriptor));
-    RETURN_IF_ERROR(rewritten_conjunct_ctx->open(_state));
-    _dict_filter_conjuncts.push_back(rewritten_conjunct_ctx);
-    _filter_conjuncts.push_back(rewritten_conjunct_ctx);
+//    VExprContextSPtr rewritten_conjunct_ctx = VExprContext::create_shared(root);
+//    RETURN_IF_ERROR(rewritten_conjunct_ctx->prepare(_state, *_row_descriptor));
+//    RETURN_IF_ERROR(rewritten_conjunct_ctx->open(_state));
+//    _dict_filter_conjuncts.push_back(rewritten_conjunct_ctx);
+//    _filter_conjuncts.push_back(rewritten_conjunct_ctx);
     return Status::OK();
 }
 
@@ -973,7 +1006,7 @@ void RowGroupReader::_convert_dict_cols_to_string_cols(Block* block) {
         if (auto* nullable_column = check_and_get_column<ColumnNullable>(*column)) {
             const ColumnPtr& nested_column = nullable_column->get_nested_column_ptr();
             const ColumnInt32* dict_column = assert_cast<const ColumnInt32*>(nested_column.get());
-            DCHECK(dict_column);
+            CHECK(dict_column);
 
             MutableColumnPtr string_column =
                     _column_readers[dict_filter_cols.first]->convert_dict_column_to_string_column(
