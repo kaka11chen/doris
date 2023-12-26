@@ -75,11 +75,13 @@ void ColumnSelectVector::set_run_length_null_map(const std::vector<uint16_t>& ru
             if (is_null) {
                 _num_nulls += run_length;
                 for (int i = 0; i < run_length; ++i) {
-                    _data_map[map_index++] = FILTERED_NULL;
+                    //_data_map[map_index++] = FILTERED_NULL;
+                    _data_map[map_index++] = NULL_DATA;
                 }
             } else {
                 for (int i = 0; i < run_length; ++i) {
-                    _data_map[map_index++] = FILTERED_CONTENT;
+                    //_data_map[map_index++] = FILTERED_CONTENT;
+                    _data_map[map_index++] = CONTENT;
                 }
             }
             is_null = !is_null;
@@ -104,11 +106,9 @@ void ColumnSelectVector::set_run_length_null_map(const std::vector<uint16_t>& ru
                 memset(map_data_column.data() + null_map_index, 1, num_read);
             } else {
                 for (size_t i = 0; i < num_values; ++i) {
-                    //if (_data_map[i] == CONTENT) {
-                    if (_data_map[i] == FILTERED_CONTENT) {
+                    if (_data_map[i] == CONTENT) {
                         map_data_column[null_map_index++] = (UInt8) false;
-                        //} else if (_data_map[i] == NULL_DATA) {
-                    } else if (_data_map[i] == FILTERED_NULL) {
+                    } else if (_data_map[i] == NULL_DATA) {
                         map_data_column[null_map_index++] = (UInt8) true;
                     }
                 }
