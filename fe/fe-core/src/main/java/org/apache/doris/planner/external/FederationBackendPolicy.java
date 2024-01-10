@@ -59,22 +59,44 @@ public class FederationBackendPolicy {
     private static final Logger LOG = LogManager.getLogger(FederationBackendPolicy.class);
     private final List<Backend> backends = Lists.newArrayList();
     private final Map<String, List<Backend>> backendMap = Maps.newHashMap();
+
+    private Map<Backend, Long> assignedScansPerComputeNode = Maps.newHashMap();
     private final SecureRandom random = new SecureRandom();
-    private ConsistentHash<TScanRangeLocations, Backend> consistentHash;
+    // private ConsistentHash<TScanRangeLocations, Backend> consistentHash;
+
+    private HashRing<TScanRangeLocations, Backend> hashRing;
+
 
     private int nextBe = 0;
     private boolean initialized = false;
 
+    private long avgNodeScanRangeBytes;
+
+    private long maxImbalanceBytes;
+
     // Create a ConsistentHash ring may be a time-consuming operation, so we cache it.
-    private static LoadingCache<HashCacheKey, ConsistentHash<TScanRangeLocations, Backend>> consistentHashCache;
+    // private static LoadingCache<HashCacheKey, ConsistentHash<TScanRangeLocations, Backend>> consistentHashCache;
+    //
+    // static {
+    //     consistentHashCache = CacheBuilder.newBuilder().maximumSize(5)
+    //             .build(new CacheLoader<HashCacheKey, ConsistentHash<TScanRangeLocations, Backend>>() {
+    //                 @Override
+    //                 public ConsistentHash<TScanRangeLocations, Backend> load(HashCacheKey key) {
+    //                     return new ConsistentHash<>(Hashing.murmur3_128(), new ScanRangeHash(),
+    //                             new BackendHash(), key.bes, Config.virtual_node_number);
+    //                 }
+    //             });
+    // }
+
+    private static LoadingCache<HashCacheKey, HashRing<TScanRangeLocations, Backend>> hashRingCache;
 
     static {
-        consistentHashCache = CacheBuilder.newBuilder().maximumSize(5)
-                .build(new CacheLoader<HashCacheKey, ConsistentHash<TScanRangeLocations, Backend>>() {
+        hashRingCache = CacheBuilder.newBuilder().maximumSize(5)
+                .build(new CacheLoader<HashCacheKey, HashRing<TScanRangeLocations, Backend>>() {
                     @Override
-                    public ConsistentHash<TScanRangeLocations, Backend> load(HashCacheKey key) {
-                        return new ConsistentHash<>(Hashing.murmur3_128(), new ScanRangeHash(),
-                                new BackendHash(), key.bes, Config.virtual_node_number);
+                    public HashRing<TScanRangeLocations, Backend> load(HashCacheKey key) {
+                        return new ConsistentHashRing<>(Hashing.murmur3_128(), new ScanRangeHash(),
+                                new BackendHash(), key.bes, 32);
                     }
                 });
     }
@@ -152,12 +174,32 @@ public class FederationBackendPolicy {
         if (backends.isEmpty()) {
             throw new UserException("No available backends");
         }
+        for (Backend backend : backends) {
+            assignedScansPerComputeNode.put(backend, 0L);
+        }
+
         backendMap.putAll(backends.stream().collect(Collectors.groupingBy(Backend::getHost)));
         try {
-            consistentHash = consistentHashCache.get(new HashCacheKey(backends));
+            // consistentHash = consistentHashCache.get(new HashCacheKey(backends));
+            hashRing = hashRingCache.get(new HashCacheKey(backends));
         } catch (ExecutionException e) {
             throw new UserException("failed to get consistent hash", e);
         }
+
+
+    }
+
+    public void setScanRangeLocationsList(List<TScanRangeLocations> tScanRangeLocationsList) {
+        // long totalSize = tScanRangeLocationsList.stream().mapToLong(x->x.scan_range.ext_scan_range.file_scan_range.ranges.stream().mapToLong(y -> y.size).sum())
+        //         .sum();
+        long size = 0;
+        for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
+            size += scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges.stream().mapToLong(x -> x.size).sum();
+        }
+        avgNodeScanRangeBytes =  size / (tScanRangeLocationsList.size() + 1);
+        // avgNodeScanRangeBytes = totalSize / Math.max(backends.size(), 1) + 1;
+        maxImbalanceBytes = avgNodeScanRangeBytes * 3;
+        System.out.println("avgScanRangeBytes: " + avgNodeScanRangeBytes + ", maxImbalanceBytes: " + maxImbalanceBytes);
     }
 
     public Backend getNextBe() {
@@ -167,7 +209,86 @@ public class FederationBackendPolicy {
     }
 
     public Backend getNextConsistentBe(TScanRangeLocations scanRangeLocations) {
-        return consistentHash.getNode(scanRangeLocations);
+        // return consistentHash.getNode(scanRangeLocations);
+        List<Backend> backends = hashRing.get(scanRangeLocations, 3);
+        // Backend backend = reBalanceScanRangeForComputeNode(backends, avgNodeScanRangeBytes, scanRangeLocations);
+        Backend backend = reBalanceScanRangeForComputeNode(backends, maxImbalanceBytes);
+        if (backend == null) {
+            throw new RuntimeException("Failed to find backend to execute");
+        }
+        recordScanRangeAssignment(backend, backends, scanRangeLocations);
+        return backend;
+    }
+
+    // private Backend reBalanceScanRangeForComputeNode(List<Backend> backends, long avgNodeScanRangeBytes,
+    //         TScanRangeLocations scanRangeLocations) {
+    //     if (backends == null || backends.isEmpty()) {
+    //         return null;
+    //     }
+    //
+    //     Backend res = null;
+    //     long addedScans = scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges.stream().mapToLong(x -> x.size)
+    //             .sum();
+    //     for (Backend backend : backends) {
+    //         long assignedScanRanges = assignedScansPerComputeNode.get(backend);
+    //         if (assignedScanRanges + addedScans < avgNodeScanRangeBytes * 1.1) {
+    //             res = backend;
+    //             break;
+    //         }
+    //     }
+    //     if (res == null) {
+    //         res = backends.get(0);
+    //     }
+    //     return res;
+    // }
+
+    private Backend reBalanceScanRangeForComputeNode(List<Backend> backends, long maxImbalanceBytes) {
+        if (backends == null || backends.isEmpty()) {
+            return null;
+        }
+
+        Backend node = null;
+        long minAssignedScanRanges = Long.MAX_VALUE;
+        for (Backend backend : backends) {
+            long assignedScanRanges = assignedScansPerComputeNode.get(backend);
+            if (assignedScanRanges < minAssignedScanRanges) {
+                minAssignedScanRanges = assignedScanRanges;
+                node = backend;
+            }
+        }
+        if (maxImbalanceBytes == 0) {
+            return node;
+        }
+
+        for (Backend backend : backends) {
+            long assignedScanRanges = assignedScansPerComputeNode.get(backend);
+            if (assignedScanRanges < (minAssignedScanRanges + maxImbalanceBytes)) {
+                node = backend;
+                break;
+            }
+        }
+        return node;
+    }
+
+    private void recordScanRangeAssignment(Backend worker, List<Backend> backends,
+            TScanRangeLocations scanRangeLocations) {
+        // workerProvider.selectWorker(worker.getId());
+
+        // update statistic
+        long addedScans = scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges.stream().mapToLong(x -> x.size)
+                .sum();
+        System.out.println("addedScans: " + addedScans);
+        assignedScansPerComputeNode.put(worker, assignedScansPerComputeNode.get(worker) + addedScans);
+        // // the fist item in backends will be assigned if there is no re-balance, we compute re-balance bytes
+        // // if the worker is not the first item in backends.
+        // if (worker != backends.get(0)) {
+        //     reBalanceBytesPerComputeNode.put(worker, reBalanceBytesPerComputeNode.get(worker) + addedScans);
+        // }
+        //
+        // // add scan range params
+        // TScanRangeParams scanRangeParams = new TScanRangeParams();
+        // scanRangeParams.scan_range = scanRangeLocations.scan_range;
+        // assignment.put(worker.getId(), scanNode.getId().asInt(), scanRangeParams);
     }
 
     // Try to find a local BE, if not exists, use `getNextBe` instead
@@ -196,7 +317,9 @@ public class FederationBackendPolicy {
     private static class BackendHash implements Funnel<Backend> {
         @Override
         public void funnel(Backend backend, PrimitiveSink primitiveSink) {
-            primitiveSink.putLong(backend.getId());
+            // primitiveSink.putLong(backend.getId());
+            primitiveSink.putString(backend.getHost(), StandardCharsets.UTF_8);
+            primitiveSink.putInt(backend.getBePort());
         }
     }
 
@@ -205,9 +328,12 @@ public class FederationBackendPolicy {
         public void funnel(TScanRangeLocations scanRange, PrimitiveSink primitiveSink) {
             Preconditions.checkState(scanRange.scan_range.isSetExtScanRange());
             for (TFileRangeDesc desc : scanRange.scan_range.ext_scan_range.file_scan_range.ranges) {
-                primitiveSink.putBytes(desc.path.getBytes(StandardCharsets.UTF_8));
+                // primitiveSink.putBytes(desc.path.getBytes(StandardCharsets.UTF_8));
+                // primitiveSink.putLong(desc.start_offset);
+                // primitiveSink.putLong(desc.size);
+
+                primitiveSink.putString(desc.path, StandardCharsets.UTF_8);
                 primitiveSink.putLong(desc.start_offset);
-                primitiveSink.putLong(desc.size);
             }
         }
     }

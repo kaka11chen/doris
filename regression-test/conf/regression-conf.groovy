@@ -24,18 +24,18 @@ defaultDb = "regression_test"
 // init cmd like: select @@session.tx_read_only
 // at each time we connect.
 // add allowLoadLocalInfile so that the jdbc can execute mysql load data from client.
-jdbcUrl = "jdbc:mysql://127.0.0.1:9030/?useLocalSessionState=true&allowLoadLocalInfile=true"
-targetJdbcUrl = "jdbc:mysql://127.0.0.1:9030/?useLocalSessionState=true&allowLoadLocalInfile=true"
+jdbcUrl = "jdbc:mysql://127.0.0.1:39033/?useLocalSessionState=true&allowLoadLocalInfile=true"
+targetJdbcUrl = "jdbc:mysql://127.0.0.1:39033/?useLocalSessionState=true&allowLoadLocalInfile=true"
 jdbcUser = "root"
 jdbcPassword = ""
 
-feSourceThriftAddress = "127.0.0.1:9020"
-feTargetThriftAddress = "127.0.0.1:9020"
-syncerAddress = "127.0.0.1:9190"
+feSourceThriftAddress = "127.0.0.1:39023"
+feTargetThriftAddress = "127.0.0.1:39023"
+syncerAddress = "127.0.0.1:39193"
 feSyncerUser = "root"
 feSyncerPassword = ""
 
-feHttpAddress = "127.0.0.1:8030"
+feHttpAddress = "127.0.0.1:38033"
 feHttpUser = "root"
 feHttpPassword = ""
 
@@ -117,9 +117,9 @@ mariadb_10_port=3326
 // hive catalog test config
 // To enable hive/paimon test, you need first start hive container.
 // See `docker/thirdparties/start-thirdparties-docker.sh`
-enableHiveTest=false
+enableHiveTest=true
 enablePaimonTest=false
-hms_port=9183
+hms_port=9083
 hdfs_port=8120
 hiveServerPort=10000
 hive_pg_port=5432
@@ -139,13 +139,13 @@ es_8_port=39200
 
 
 //hive  catalog test config for bigdata
-enableExternalHiveTest = false
-extHiveHmsHost = "***.**.**.**"
+enableExternalHiveTest = true
+extHiveHmsHost = "172.21.16.47"
 extHiveHmsPort = 7004
 extHdfsPort = 4007
 extHiveServerPort= 7001
-extHiveHmsUser = "****"
-extHiveHmsPassword= "***********"
+extHiveHmsUser = "root"
+extHiveHmsPassword= "Cfplhys@2022"
 
 //paimon catalog test config for bigdata
 enableExternalPaimonTest = false

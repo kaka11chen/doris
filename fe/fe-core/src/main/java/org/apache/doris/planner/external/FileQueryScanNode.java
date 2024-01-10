@@ -365,23 +365,48 @@ public abstract class FileQueryScanNode extends FileScanNode {
             setScanParams(rangeDesc, fileSplit);
 
             curLocations.getScanRange().getExtScanRange().getFileScanRange().addToRanges(rangeDesc);
+            scanRangeLocations.add(curLocations);
+            // TScanRangeLocation location = new TScanRangeLocation();
+            // Backend selectedBackend;
+            // if (enableShortCircuitRead) {
+            //     // Try to find a local BE if enable hdfs short circuit read
+            //     selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), curLocations);
+            // } else {
+            //     // Use consistent hash to assign the same scan range into the same backend among different queries
+            //     selectedBackend = backendPolicy.getNextConsistentBe(curLocations);
+            // }
+            // setLocationPropertiesIfNecessary(selectedBackend, locationType, locationProperties);
+            // location.setBackendId(selectedBackend.getId());
+            // location.setServer(new TNetworkAddress(selectedBackend.getHost(), selectedBackend.getBePort()));
+            // curLocations.addToLocations(location);
+            // LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
+            //         curLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
+            //         fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
+            // scanRangeLocations.add(curLocations);
+            // this.totalFileSize += fileSplit.getLength();
+        }
+
+        backendPolicy.setScanRangeLocationsList(scanRangeLocations);
+        for (int i = 0; i < scanRangeLocations.size(); ++i) {
+            TScanRangeLocations eachScanRangeLocations = scanRangeLocations.get(i);
+            FileSplit fileSplit = (FileSplit) inputSplits.get(i);
+            TFileRangeDesc fileRangeDesc = eachScanRangeLocations.scan_range.ext_scan_range.getFileScanRange().ranges.get(0);
             TScanRangeLocation location = new TScanRangeLocation();
             Backend selectedBackend;
             if (enableShortCircuitRead) {
                 // Try to find a local BE if enable hdfs short circuit read
-                selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), curLocations);
+                selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), eachScanRangeLocations);
             } else {
                 // Use consistent hash to assign the same scan range into the same backend among different queries
-                selectedBackend = backendPolicy.getNextConsistentBe(curLocations);
+                selectedBackend = backendPolicy.getNextConsistentBe(eachScanRangeLocations);
             }
-            setLocationPropertiesIfNecessary(selectedBackend, locationType, locationProperties);
+            setLocationPropertiesIfNecessary(selectedBackend, fileRangeDesc.getFileType(), locationProperties);
             location.setBackendId(selectedBackend.getId());
             location.setServer(new TNetworkAddress(selectedBackend.getHost(), selectedBackend.getBePort()));
-            curLocations.addToLocations(location);
+            eachScanRangeLocations.addToLocations(location);
             LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
-                    curLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
+                    eachScanRangeLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
                     fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
-            scanRangeLocations.add(curLocations);
             this.totalFileSize += fileSplit.getLength();
         }
         if (ConnectContext.get().getExecutor() != null) {
