@@ -125,9 +125,9 @@ public class ConsistentHashRing<K, N> implements HashRing<K, N> {
     public List<N> get(K key, int distinctNumber) {
         List<N> ans = new ArrayList<>();
         Hasher hasher = hashFunction.newHasher();
-        System.out.println("key: " + key);
+        // System.out.println("key: " + key);
         long hash = hasher.putObject(key, keyFunnel).hash().asLong();
-        System.out.println("hash: " +  hash);
+        // System.out.println("hash: " +  hash);
 
         // search from `hash` to end.
         collectNodes(hashRing.tailMap(hash, true), ans, distinctNumber);

@@ -39,6 +39,7 @@ import org.apache.doris.datasource.hive.AcidInfo;
 import org.apache.doris.datasource.hive.AcidInfo.DeleteDeltaInfo;
 import org.apache.doris.nereids.glue.translator.PlanTranslatorContext;
 import org.apache.doris.planner.PlanNodeId;
+import org.apache.doris.planner.external.FederationBackendPolicy.ScanRangeLocationsAndSplit;
 import org.apache.doris.planner.external.iceberg.IcebergSplit;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.spi.Split;
@@ -68,6 +69,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
 import lombok.Getter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -75,6 +77,7 @@ import org.apache.logging.log4j.Logger;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -387,28 +390,48 @@ public abstract class FileQueryScanNode extends FileScanNode {
         }
 
         backendPolicy.setScanRangeLocationsList(scanRangeLocations);
-        for (int i = 0; i < scanRangeLocations.size(); ++i) {
-            TScanRangeLocations eachScanRangeLocations = scanRangeLocations.get(i);
-            FileSplit fileSplit = (FileSplit) inputSplits.get(i);
-            TFileRangeDesc fileRangeDesc = eachScanRangeLocations.scan_range.ext_scan_range.getFileScanRange().ranges.get(0);
-            TScanRangeLocation location = new TScanRangeLocation();
-            Backend selectedBackend;
-            if (enableShortCircuitRead) {
-                // Try to find a local BE if enable hdfs short circuit read
-                selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), eachScanRangeLocations);
-            } else {
-                // Use consistent hash to assign the same scan range into the same backend among different queries
-                selectedBackend = backendPolicy.getNextConsistentBe(eachScanRangeLocations);
+        Multimap<Backend, ScanRangeLocationsAndSplit> assignment =  backendPolicy.computeScanRangeAssignment(inputSplits);
+        for (Backend backend : assignment.keySet()) {
+            Collection<ScanRangeLocationsAndSplit> scanRangeLocationsAndSplits = assignment.get(backend);
+            for (ScanRangeLocationsAndSplit scanRangeLocationsAndSplit : scanRangeLocationsAndSplits) {
+                    FileSplit fileSplit = (FileSplit) scanRangeLocationsAndSplit.getSplit();
+                TScanRangeLocations scanRangeLocations = scanRangeLocationsAndSplit.getScanRangeLocations();
+                TFileRangeDesc fileRangeDesc = scanRangeLocations.scan_range.ext_scan_range.getFileScanRange().ranges.get(0);
+                TScanRangeLocation location = new TScanRangeLocation();
+                setLocationPropertiesIfNecessary(backend, fileRangeDesc.getFileType(), locationProperties);
+                location.setBackendId(backend.getId());
+                location.setServer(new TNetworkAddress(backend.getHost(), backend.getBePort()));
+                scanRangeLocationsAndSplit.getScanRangeLocations().addToLocations(location);
+                LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
+                        scanRangeLocationsAndSplit.getScanRangeLocations().getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
+                        fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
+                this.totalFileSize += fileSplit.getLength();
             }
-            setLocationPropertiesIfNecessary(selectedBackend, fileRangeDesc.getFileType(), locationProperties);
-            location.setBackendId(selectedBackend.getId());
-            location.setServer(new TNetworkAddress(selectedBackend.getHost(), selectedBackend.getBePort()));
-            eachScanRangeLocations.addToLocations(location);
-            LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
-                    eachScanRangeLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
-                    fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
-            this.totalFileSize += fileSplit.getLength();
         }
+
+
+        // for (int i = 0; i < scanRangeLocations.size(); ++i) {
+        //     TScanRangeLocations eachScanRangeLocations = scanRangeLocations.get(i);
+        //     FileSplit fileSplit = (FileSplit) inputSplits.get(i);
+        //     TFileRangeDesc fileRangeDesc = eachScanRangeLocations.scan_range.ext_scan_range.getFileScanRange().ranges.get(0);
+        //     TScanRangeLocation location = new TScanRangeLocation();
+        //     Backend selectedBackend;
+        //     if (enableShortCircuitRead) {
+        //         // Try to find a local BE if enable hdfs short circuit read
+        //         selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), eachScanRangeLocations);
+        //     } else {
+        //         // Use consistent hash to assign the same scan range into the same backend among different queries
+        //         selectedBackend = backendPolicy.getNextConsistentBe(eachScanRangeLocations);
+        //     }
+        //     setLocationPropertiesIfNecessary(selectedBackend, fileRangeDesc.getFileType(), locationProperties);
+        //     location.setBackendId(selectedBackend.getId());
+        //     location.setServer(new TNetworkAddress(selectedBackend.getHost(), selectedBackend.getBePort()));
+        //     eachScanRangeLocations.addToLocations(location);
+        //     LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
+        //             eachScanRangeLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
+        //             fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
+        //     this.totalFileSize += fileSplit.getLength();
+        // }
         if (ConnectContext.get().getExecutor() != null) {
             ConnectContext.get().getExecutor().getSummaryProfile().setCreateScanRangeFinishTime();
         }

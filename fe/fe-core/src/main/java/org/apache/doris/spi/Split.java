@@ -17,6 +17,8 @@
 
 package org.apache.doris.spi;
 
+import org.apache.doris.planner.external.SplitWeight;
+
 /**
  * Split interface. e.g. Tablet for Olap Table.
  */
@@ -26,4 +28,13 @@ public interface Split {
 
     Object getInfo();
 
+    default SplitWeight getSplitWeight()
+    {
+        return SplitWeight.standard();
+    }
+
+    default boolean isRemotelyAccessible()
+    {
+        return true;
+    }
 }
