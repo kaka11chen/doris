@@ -20,8 +20,8 @@ package org.apache.doris.planner;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.UserException;
 import org.apache.doris.planner.external.FederationBackendPolicy;
-import org.apache.doris.planner.external.FederationBackendPolicy.ScanRangeLocationsAndSplit;
 import org.apache.doris.planner.external.FileSplit;
+import org.apache.doris.planner.external.NodeSelectionStrategy;
 import org.apache.doris.spi.Split;
 import org.apache.doris.system.Backend;
 import org.apache.doris.system.SystemInfoService;
@@ -32,6 +32,7 @@ import org.apache.doris.thrift.TScanRange;
 import org.apache.doris.thrift.TScanRangeLocations;
 
 import com.google.common.base.Stopwatch;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Multimap;
 import mockit.Mock;
 import mockit.MockUp;
@@ -43,11 +44,14 @@ import org.junit.Test;
 import org.junit.jupiter.api.Assertions;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 public class FederationBackendPolicyTest {
@@ -57,6 +61,65 @@ public class FederationBackendPolicyTest {
     @Before
     public void setUp() {
 
+        // SystemInfoService service = new SystemInfoService();
+
+        // for (int i = 0; i < 190; i++) {
+        //     Backend backend = new Backend(Long.valueOf(i), "192.168.1." + i, 9050);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(190 + i), "192.168.1." + i, 9051);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(200 + i), "192.168.2." + i, 9050);
+        //     backend.setAlive(false);
+        //     service.addBackend(backend);
+        // }
+
+        // Backend backend1 = new Backend(10010L, "172.30.0.100", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(10562L, "172.30.0.106", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(10563L, "172.30.0.118", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        // Backend backend1 = new Backend(10002L, "172.30.0.100", 9050);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(10003L, "172.30.0.106", 9050);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(10004L, "172.30.0.118", 9050);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        // Backend backend1 = new Backend(10049, "172.21.0.35 ", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(11001, "172.21.0.42", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(11002, "172.21.0.18", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        // new MockUp<Env>() {
+        //     @Mock
+        //     public SystemInfoService getCurrentSystemInfo() {
+        //         return service;
+        //     }
+        // };
+
+    }
+
+    @Test
+    public void testGetNextBe() throws UserException {
         SystemInfoService service = new SystemInfoService();
 
         // for (int i = 0; i < 190; i++) {
@@ -112,10 +175,6 @@ public class FederationBackendPolicyTest {
             }
         };
 
-    }
-
-    @Test
-    public void testGetNextBe() throws UserException {
         FederationBackendPolicy policy = new FederationBackendPolicy();
         policy.init();
         int backendNum = 200;
@@ -130,26 +189,136 @@ public class FederationBackendPolicyTest {
                 + " times cost [" + sw.elapsed(TimeUnit.MILLISECONDS) + "] ms");
     }
 
-    @Test
-    public void testGetNextLocalBe() throws UserException {
-        FederationBackendPolicy policy = new FederationBackendPolicy();
-        policy.init();
-        int backendNum = 200;
-        int invokeTimes = 1000000;
-        Assertions.assertEquals(policy.numBackends(), backendNum);
-        List<String> localHosts = Arrays.asList("192.168.1.0", "192.168.1.1", "192.168.1.2");
-        TScanRangeLocations scanRangeLocations = getScanRangeLocations("path1", 0, 100);
-        Stopwatch sw = Stopwatch.createStarted();
-        for (int i = 0; i < invokeTimes; i++) {
-            Assertions.assertTrue(localHosts.contains(policy.getNextLocalBe(localHosts, scanRangeLocations).getHost()));
-        }
-        sw.stop();
-        System.out.println("Invoke getNextLocalBe() " + invokeTimes
-                + " times cost [" + sw.elapsed(TimeUnit.MILLISECONDS) + "] ms");
-    }
+    // @Test
+    // public void testGetNextLocalBe() throws UserException {
+    //     SystemInfoService service = new SystemInfoService();
+    //
+    //     // for (int i = 0; i < 190; i++) {
+    //     //     Backend backend = new Backend(Long.valueOf(i), "192.168.1." + i, 9050);
+    //     //     backend.setAlive(true);
+    //     //     service.addBackend(backend);
+    //     // }
+    //     // for (int i = 0; i < 10; i++) {
+    //     //     Backend backend = new Backend(Long.valueOf(190 + i), "192.168.1." + i, 9051);
+    //     //     backend.setAlive(true);
+    //     //     service.addBackend(backend);
+    //     // }
+    //     // for (int i = 0; i < 10; i++) {
+    //     //     Backend backend = new Backend(Long.valueOf(200 + i), "192.168.2." + i, 9050);
+    //     //     backend.setAlive(false);
+    //     //     service.addBackend(backend);
+    //     // }
+    //
+    //     // Backend backend1 = new Backend(10010L, "172.30.0.100", 29052);
+    //     // backend1.setAlive(true);
+    //     // service.addBackend(backend1);
+    //     // Backend backend2 = new Backend(10562L, "172.30.0.106", 29052);
+    //     // backend2.setAlive(true);
+    //     // service.addBackend(backend2);
+    //     // Backend backend3 = new Backend(10563L, "172.30.0.118", 29052);
+    //     // backend3.setAlive(true);
+    //     // service.addBackend(backend3);
+    //
+    //     Backend backend1 = new Backend(10002L, "172.30.0.100", 9050);
+    //     backend1.setAlive(true);
+    //     service.addBackend(backend1);
+    //     Backend backend2 = new Backend(10003L, "172.30.0.106", 9050);
+    //     backend2.setAlive(true);
+    //     service.addBackend(backend2);
+    //     Backend backend3 = new Backend(10004L, "172.30.0.118", 9050);
+    //     backend3.setAlive(true);
+    //     service.addBackend(backend3);
+    //
+    //     // Backend backend1 = new Backend(10049, "172.21.0.35 ", 29052);
+    //     // backend1.setAlive(true);
+    //     // service.addBackend(backend1);
+    //     // Backend backend2 = new Backend(11001, "172.21.0.42", 29052);
+    //     // backend2.setAlive(true);
+    //     // service.addBackend(backend2);
+    //     // Backend backend3 = new Backend(11002, "172.21.0.18", 29052);
+    //     // backend3.setAlive(true);
+    //     // service.addBackend(backend3);
+    //
+    //     new MockUp<Env>() {
+    //         @Mock
+    //         public SystemInfoService getCurrentSystemInfo() {
+    //             return service;
+    //         }
+    //     };
+    //
+    //     FederationBackendPolicy policy = new FederationBackendPolicy();
+    //     policy.init();
+    //     int backendNum = 200;
+    //     int invokeTimes = 1000000;
+    //     Assertions.assertEquals(policy.numBackends(), backendNum);
+    //     List<String> localHosts = Arrays.asList("192.168.1.0", "192.168.1.1", "192.168.1.2");
+    //     TScanRangeLocations scanRangeLocations = getScanRangeLocations("path1", 0, 100);
+    //     Stopwatch sw = Stopwatch.createStarted();
+    //     for (int i = 0; i < invokeTimes; i++) {
+    //         Assertions.assertTrue(localHosts.contains(policy.getNextLocalBe(localHosts, scanRangeLocations).getHost()));
+    //     }
+    //     sw.stop();
+    //     System.out.println("Invoke getNextLocalBe() " + invokeTimes
+    //             + " times cost [" + sw.elapsed(TimeUnit.MILLISECONDS) + "] ms");
+    // }
 
     @Test
     public void testConsistentHash() throws UserException {
+        SystemInfoService service = new SystemInfoService();
+
+        // for (int i = 0; i < 190; i++) {
+        //     Backend backend = new Backend(Long.valueOf(i), "192.168.1." + i, 9050);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(190 + i), "192.168.1." + i, 9051);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(200 + i), "192.168.2." + i, 9050);
+        //     backend.setAlive(false);
+        //     service.addBackend(backend);
+        // }
+
+        // Backend backend1 = new Backend(10010L, "172.30.0.100", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(10562L, "172.30.0.106", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(10563L, "172.30.0.118", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        Backend backend1 = new Backend(10002L, "172.30.0.100", 9050);
+        backend1.setAlive(true);
+        service.addBackend(backend1);
+        Backend backend2 = new Backend(10003L, "172.30.0.106", 9050);
+        backend2.setAlive(true);
+        service.addBackend(backend2);
+        Backend backend3 = new Backend(10004L, "172.30.0.118", 9050);
+        backend3.setAlive(true);
+        service.addBackend(backend3);
+
+        // Backend backend1 = new Backend(10049, "172.21.0.35 ", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(11001, "172.21.0.42", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(11002, "172.21.0.18", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        new MockUp<Env>() {
+            @Mock
+            public SystemInfoService getCurrentSystemInfo() {
+                return service;
+            }
+        };
+
         List<TScanRangeLocations> tScanRangeLocationsList = new ArrayList<>();
 
         {
@@ -1182,26 +1351,81 @@ public class FederationBackendPolicyTest {
 
             tScanRangeLocationsList.add(scanRangeLocations);
         }
-        FederationBackendPolicy policy = new FederationBackendPolicy();
+        FederationBackendPolicy policy = new FederationBackendPolicy(NodeSelectionStrategy.CONSISTENT_HASHING);
         policy.init();
-        policy.setScanRangeLocationsList(tScanRangeLocationsList);
+        // policy.setScanRangeLocationsList(tScanRangeLocationsList);
         int backendNum = 3;
         Assertions.assertEquals(policy.numBackends(), backendNum);
-        for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
-            System.out.println(policy.getNextConsistentBe(scanRangeLocations).getId());
-        }
+        // for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
+        //     System.out.println(policy.getNextConsistentBe(scanRangeLocations).getId());
+        // }
         // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
         // int variance = 5 * scanRangeSize;
-        Map<Backend, Long> stats = policy.getAssignedScanBytesPerBackend();
-        for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
-            System.out.printf("%s -> %d bytes\n", entry.getKey(), entry.getValue());
-            // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
-        }
+        // Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
+        // for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
+        //     System.out.printf("%s -> %d bytes\n", entry.getKey(), entry.getValue());
+        //     // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+        // }
 
     }
 
     @Test
     public void testComputeScanRangeAssignment() throws UserException {
+        SystemInfoService service = new SystemInfoService();
+
+        // for (int i = 0; i < 190; i++) {
+        //     Backend backend = new Backend(Long.valueOf(i), "192.168.1." + i, 9050);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(190 + i), "192.168.1." + i, 9051);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(200 + i), "192.168.2." + i, 9050);
+        //     backend.setAlive(false);
+        //     service.addBackend(backend);
+        // }
+
+        // Backend backend1 = new Backend(10010L, "172.30.0.100", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(10562L, "172.30.0.106", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(10563L, "172.30.0.118", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        Backend backend1 = new Backend(10002L, "172.30.0.100", 9050);
+        backend1.setAlive(true);
+        service.addBackend(backend1);
+        Backend backend2 = new Backend(10003L, "172.30.0.106", 9050);
+        backend2.setAlive(true);
+        service.addBackend(backend2);
+        Backend backend3 = new Backend(10004L, "172.30.0.118", 9050);
+        backend3.setAlive(true);
+        service.addBackend(backend3);
+
+        // Backend backend1 = new Backend(10049, "172.21.0.35 ", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(11001, "172.21.0.42", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(11002, "172.21.0.18", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        new MockUp<Env>() {
+            @Mock
+            public SystemInfoService getCurrentSystemInfo() {
+                return service;
+            }
+        };
+
         List<Split> splits = new ArrayList<>();
         List<TScanRangeLocations> tScanRangeLocationsList = new ArrayList<>();
         {
@@ -2494,20 +2718,63 @@ public class FederationBackendPolicyTest {
                     getScanRangeLocations(split.getPath().toString(), split.getStart(), split.getLength()));
         }
 
-        FederationBackendPolicy policy = new FederationBackendPolicy();
+        FederationBackendPolicy policy = new FederationBackendPolicy(NodeSelectionStrategy.CONSISTENT_HASHING);
         policy.init();
-        policy.setScanRangeLocationsList(tScanRangeLocationsList);
+        // policy.setScanRangeLocationsList(tScanRangeLocationsList);
         int backendNum = 3;
         Assertions.assertEquals(policy.numBackends(), backendNum);
         // for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
         //     System.out.println(policy.getNextConsistentBe(scanRangeLocations).getId());
         // }
-        Multimap<Backend, ScanRangeLocationsAndSplit> assignment = policy.computeScanRangeAssignment(splits);
+        Multimap<Backend, Split> assignment = policy.computeScanRangeAssignment(splits);
         // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
         // int variance = 5 * scanRangeSize;
-        Map<Backend, Long> stats = policy.getAssignedScanBytesPerBackend();
+        // Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
+        // for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
+        //     System.out.printf("%s -> %d bytes\n", entry.getKey(), entry.getValue());
+        //     // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+        // }
+
+        for (Backend backend : assignment.keySet()) {
+            Collection<Split> assignedSplits = assignment.get(backend);
+            long ScanBytes = 0L;
+            for (Split split : assignedSplits) {
+                FileSplit fileSplit = (FileSplit) split;
+                ScanBytes += fileSplit.getLength();
+                // if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00000-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.100", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00003-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.100", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00009-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00011-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00014-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00094-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00096-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00098-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                //     checkedLocalSplit.add(true);
+                // } else {
+                // }
+            }
+            System.out.printf("%s -> %d splits, %d bytes\n", backend, assignedSplits.size(), ScanBytes);
+        }
+        // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
+        // int variance = 5 * scanRangeSize;
+        Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
         for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
-            System.out.printf("%s -> %d bytes\n", entry.getKey(), entry.getValue());
+            System.out.printf("weight: %s -> %d\n", entry.getKey(), entry.getValue());
             // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
         }
 
@@ -2515,6 +2782,61 @@ public class FederationBackendPolicyTest {
 
     @Test
     public void testComputeScanRangeAssignmentLocal() throws UserException {
+        SystemInfoService service = new SystemInfoService();
+
+        // for (int i = 0; i < 190; i++) {
+        //     Backend backend = new Backend(Long.valueOf(i), "192.168.1." + i, 9050);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(190 + i), "192.168.1." + i, 9051);
+        //     backend.setAlive(true);
+        //     service.addBackend(backend);
+        // }
+        // for (int i = 0; i < 10; i++) {
+        //     Backend backend = new Backend(Long.valueOf(200 + i), "192.168.2." + i, 9050);
+        //     backend.setAlive(false);
+        //     service.addBackend(backend);
+        // }
+
+        // Backend backend1 = new Backend(10010L, "172.30.0.100", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(10562L, "172.30.0.106", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(10563L, "172.30.0.118", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        Backend backend1 = new Backend(10002L, "172.30.0.100", 9050);
+        backend1.setAlive(true);
+        service.addBackend(backend1);
+        Backend backend2 = new Backend(10003L, "172.30.0.106", 9050);
+        backend2.setAlive(true);
+        service.addBackend(backend2);
+        Backend backend3 = new Backend(10004L, "172.30.0.118", 9050);
+        backend3.setAlive(true);
+        service.addBackend(backend3);
+
+        // Backend backend1 = new Backend(10049, "172.21.0.35 ", 29052);
+        // backend1.setAlive(true);
+        // service.addBackend(backend1);
+        // Backend backend2 = new Backend(11001, "172.21.0.42", 29052);
+        // backend2.setAlive(true);
+        // service.addBackend(backend2);
+        // Backend backend3 = new Backend(11002, "172.21.0.18", 29052);
+        // backend3.setAlive(true);
+        // service.addBackend(backend3);
+
+        new MockUp<Env>() {
+            @Mock
+            public SystemInfoService getCurrentSystemInfo() {
+                return service;
+            }
+        };
+
         List<Split> splits = new ArrayList<>();
         List<TScanRangeLocations> tScanRangeLocationsList = new ArrayList<>();
         {
@@ -3480,7 +3802,7 @@ public class FederationBackendPolicyTest {
         {
             FileSplit split = new FileSplit(new Path(
                     "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00096-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"),
-                    0, 64534485, 64534485, 0,  new String[] {"172.30.0.118"}, Collections.emptyList());
+                    0, 64534485, 64534485, 0, new String[] {"172.30.0.118"}, Collections.emptyList());
 
             splits.add(split);
             tScanRangeLocationsList.add(
@@ -3500,7 +3822,7 @@ public class FederationBackendPolicyTest {
         {
             FileSplit split = new FileSplit(new Path(
                     "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00098-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"),
-                    0, 67884371, 67884371, 0,  new String[] {"172.30.0.118"}, Collections.emptyList());
+                    0, 67884371, 67884371, 0, new String[] {"172.30.0.118"}, Collections.emptyList());
 
             splits.add(split);
             tScanRangeLocationsList.add(
@@ -3809,7 +4131,7 @@ public class FederationBackendPolicyTest {
 
         FederationBackendPolicy policy = new FederationBackendPolicy();
         policy.init();
-        policy.setScanRangeLocationsList(tScanRangeLocationsList);
+        // policy.setScanRangeLocationsList(tScanRangeLocationsList);
         int backendNum = 3;
         Assertions.assertEquals(policy.numBackends(), backendNum);
         // for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
@@ -3817,34 +4139,42 @@ public class FederationBackendPolicyTest {
         // }
         int totalSplitNum = 0;
         List<Boolean> checkedLocalSplit = new ArrayList<>();
-        Multimap<Backend, ScanRangeLocationsAndSplit> assignment = policy.computeScanRangeAssignment(splits);
+        Multimap<Backend, Split> assignment = policy.computeScanRangeAssignment(splits);
         for (Backend backend : assignment.keySet()) {
-            Collection<ScanRangeLocationsAndSplit> scanRangeLocationsAndSplits = assignment.get(backend);
-            for (ScanRangeLocationsAndSplit scanRangeLocationsAndSplit : scanRangeLocationsAndSplits) {
-                FileSplit fileSplit = (FileSplit) scanRangeLocationsAndSplit.getSplit();
+            Collection<Split> assignedSplits = assignment.get(backend);
+            for (Split split : assignedSplits) {
+                FileSplit fileSplit = (FileSplit) split;
                 ++totalSplitNum;
-                if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00000-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00000-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.100", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00003-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00003-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.100", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00009-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00009-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.106", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00011-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00011-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.106", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00014-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00014-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.106", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00094-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00094-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.118", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00096-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00096-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.118", backend.getHost());
                     checkedLocalSplit.add(true);
-                } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00098-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                } else if (fileSplit.getPath().equals(new Path(
+                        "hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00098-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
                     Assert.assertEquals("172.30.0.118", backend.getHost());
                     checkedLocalSplit.add(true);
                 } else {
@@ -3855,12 +4185,316 @@ public class FederationBackendPolicyTest {
         Assert.assertEquals(129, totalSplitNum);
         // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
         // int variance = 5 * scanRangeSize;
-        Map<Backend, Long> stats = policy.getAssignedScanBytesPerBackend();
-        for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
-            System.out.printf("%s -> %d bytes\n", entry.getKey(), entry.getValue());
-            // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+        // Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
+        // for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
+        //     System.out.printf("%s -> %d bytes\n", entry.getKey(), entry.getValue());
+        //     // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+        // }
+
+    }
+
+    @Test
+    public void testComputeScanRangeAssigmentRandom() throws UserException {
+        SystemInfoService service = new SystemInfoService();
+        new MockUp<Env>() {
+            @Mock
+            public SystemInfoService getCurrentSystemInfo() {
+                return service;
+            }
+        };
+
+        Random random = new Random();
+        int backendNum = random.nextInt(100 - 1) + 1;
+
+        int minOctet3 = 0;
+        int maxOctet3 = 250;
+        int minOctet4 = 1;
+        int maxOctet4 = 250;
+        Set<Integer> backendIds = new HashSet<>();
+        Set<String> ipAddresses = new HashSet<>();
+        for (int i = 0; i < backendNum; i++) {
+            String ipAddress;
+            do {
+                int octet3 = random.nextInt((maxOctet3 - minOctet3) + 1) + minOctet3;
+                int octet4 = random.nextInt((maxOctet4 - minOctet4) + 1) + minOctet4;
+                ipAddress = 192 + "." + 168 + "." + octet3 + "." + octet4;
+            } while (!ipAddresses.add(ipAddress));
+
+            int backendId;
+            do {
+                backendId = random.nextInt(90000) + 10000;
+            } while (!backendIds.add(backendId));
+
+            Backend backend = new Backend(backendId, ipAddress, 9050);
+            backend.setAlive(true);
+            service.addBackend(backend);
         }
 
+        List<TScanRangeLocations> tScanRangeLocationsList = new ArrayList<>();
+        List<Split> remoteSplits = new ArrayList<>();
+        int splitCount = random.nextInt(1000 - 100) + 100;
+        for (int i = 0; i < splitCount; ++i) {
+            long splitLength = random.nextInt(115343360 - 94371840) + 94371840;
+            FileSplit split = new FileSplit(new Path(
+                    "hdfs://HDFS00001/usr/hive/warehouse/test.db/test_table/" + UUID.randomUUID()),
+                    0, splitLength, splitLength, 0, null, Collections.emptyList());
+            remoteSplits.add(split);
+            tScanRangeLocationsList.add(
+                    getScanRangeLocations(split.getPath().toString(), split.getStart(), split.getLength()));
+        }
+
+        List<TScanRangeLocations> localScanRangeLocationsList = new ArrayList<>();
+        List<Split> localSplits = new ArrayList<>();
+        int localSplitCount = random.nextInt(1000 - 100) + 100;
+        Set<String> totalLocalHosts = new HashSet<>();
+        for (int i = 0; i < localSplitCount; ++i) {
+            int localHostNum = random.nextInt(3 - 1) + 1;
+            Set<String> localHosts = new HashSet<>();
+            String localHost;
+            for (int j = 0; j < localHostNum; ++j) {
+                do {
+                    localHost = service.getAllBackends().get(random.nextInt(service.getAllBackends().size())).getHost();
+                } while (!localHosts.add(localHost));
+                totalLocalHosts.add(localHost);
+            }
+            long localSplitLength = random.nextInt(115343360 - 94371840) + 94371840;
+            FileSplit split = new FileSplit(new Path(
+                    "hdfs://HDFS00001/usr/hive/warehouse/test.db/test_table/" + UUID.randomUUID()),
+                    0, localSplitLength, localSplitLength, 0, localHosts.toArray(new String[0]), Collections.emptyList());
+            localSplits.add(split);
+            localScanRangeLocationsList.add(
+                    getScanRangeLocations(split.getPath().toString(), split.getStart(), split.getLength()));
+        }
+
+        Multimap<Backend, Split> result = null;
+        for (int i = 0; i < 3; ++i) {
+            FederationBackendPolicy policy = new FederationBackendPolicy(NodeSelectionStrategy.CONSISTENT_HASHING);
+            List<TScanRangeLocations> totalScanRangeLocationsList = new ArrayList<>();
+            totalScanRangeLocationsList.addAll(tScanRangeLocationsList);
+            totalScanRangeLocationsList.addAll(localScanRangeLocationsList);
+            // Collections.shuffle(totalScanRangeLocationsList);
+            policy.init();
+            // policy.setScanRangeLocationsList(totalScanRangeLocationsList);
+            Assertions.assertEquals(policy.numBackends(), backendNum);
+            // for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
+            //     System.out.println(policy.getNextConsistentBe(scanRangeLocations).getId());
+            // }
+            int totalSplitNum = 0;
+            List<Split> totalSplits = new ArrayList<>();
+            totalSplits.addAll(remoteSplits);
+            totalSplits.addAll(localSplits);
+            // Collections.shuffle(totalSplits);
+            Multimap<Backend, Split> assignment = policy.computeScanRangeAssignment(totalSplits);
+            if (i == 0) {
+                result = ArrayListMultimap.create(assignment);
+            } else {
+                Assertions.assertEquals(result, assignment);
+            }
+            for (Backend backend : assignment.keySet()) {
+                Collection<Split> splits = assignment.get(backend);
+                long ScanBytes = 0L;
+                for (Split split : splits) {
+                    FileSplit fileSplit = (FileSplit) split;
+                    ScanBytes += fileSplit.getLength();
+                    ++totalSplitNum;
+                    if (fileSplit.getHosts() != null && fileSplit.getHosts().length > 0) {
+                        for (String host : fileSplit.getHosts()) {
+                            Assert.assertTrue(totalLocalHosts.contains(host));
+                        }
+                    }
+                    // if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00000-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.100", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00003-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.100", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00009-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00011-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00014-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00094-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00096-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00098-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else {
+                    // }
+                }
+                System.out.printf("%s -> %d splits, %d bytes\n", backend, splits.size(), ScanBytes);
+            }
+            Assert.assertEquals(totalSplits.size(), totalSplitNum);
+            // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
+            // int variance = 5 * scanRangeSize;
+            Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
+            for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
+                System.out.printf("weight: %s -> %d\n", entry.getKey(), entry.getValue());
+                // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+            }
+        }
+    }
+
+    @Test
+    public void testComputeScanRangeAssigmentNonAlive() throws UserException {
+        SystemInfoService service = new SystemInfoService();
+        new MockUp<Env>() {
+            @Mock
+            public SystemInfoService getCurrentSystemInfo() {
+                return service;
+            }
+        };
+
+        Random random = new Random();
+        int backendNum = random.nextInt(100 - 1) + 1;
+
+        int minOctet3 = 0;
+        int maxOctet3 = 250;
+        int minOctet4 = 1;
+        int maxOctet4 = 250;
+        Set<Integer> backendIds = new HashSet<>();
+        Set<String> ipAddresses = new HashSet<>();
+        int aliveBackendNum = 0;
+        for (int i = 0; i < backendNum; i++) {
+            String ipAddress;
+            do {
+                int octet3 = random.nextInt((maxOctet3 - minOctet3) + 1) + minOctet3;
+                int octet4 = random.nextInt((maxOctet4 - minOctet4) + 1) + minOctet4;
+                ipAddress = 192 + "." + 168 + "." + octet3 + "." + octet4;
+            } while (!ipAddresses.add(ipAddress));
+
+            int backendId;
+            do {
+                backendId = random.nextInt(90000) + 10000;
+            } while (!backendIds.add(backendId));
+
+            Backend backend = new Backend(backendId, ipAddress, 9050);
+            if (i % 2 == 0) {
+                ++aliveBackendNum;
+                backend.setAlive(true);
+            } else {
+                backend.setAlive(false);
+            }
+            service.addBackend(backend);
+        }
+
+        List<TScanRangeLocations> tScanRangeLocationsList = new ArrayList<>();
+        List<Split> remoteSplits = new ArrayList<>();
+        int splitCount = random.nextInt(1000 - 100) + 100;
+        for (int i = 0; i < splitCount; ++i) {
+            long splitLength = random.nextInt(115343360 - 94371840) + 94371840;
+            FileSplit split = new FileSplit(new Path(
+                    "hdfs://HDFS00001/usr/hive/warehouse/test.db/test_table/" + UUID.randomUUID()),
+                    0, splitLength, splitLength, 0, null, Collections.emptyList());
+            remoteSplits.add(split);
+            tScanRangeLocationsList.add(
+                    getScanRangeLocations(split.getPath().toString(), split.getStart(), split.getLength()));
+        }
+
+        List<TScanRangeLocations> localScanRangeLocationsList = new ArrayList<>();
+        List<Split> localSplits = new ArrayList<>();
+        int localSplitCount = random.nextInt(1000 - 100) + 100;
+        Set<String> totalLocalHosts = new HashSet<>();
+        for (int i = 0; i < localSplitCount; ++i) {
+            int localHostNum = random.nextInt(3 - 1) + 1;
+            Set<String> localHosts = new HashSet<>();
+            String localHost;
+            for (int j = 0; j < localHostNum; ++j) {
+                do {
+                    localHost = service.getAllBackends().get(random.nextInt(service.getAllBackends().size())).getHost();
+                } while (!localHosts.add(localHost));
+                totalLocalHosts.add(localHost);
+            }
+            long localSplitLength = random.nextInt(115343360 - 94371840) + 94371840;
+            FileSplit split = new FileSplit(new Path(
+                    "hdfs://HDFS00001/usr/hive/warehouse/test.db/test_table/" + UUID.randomUUID()),
+                    0, localSplitLength, localSplitLength, 0, localHosts.toArray(new String[0]), Collections.emptyList());
+            localSplits.add(split);
+            localScanRangeLocationsList.add(
+                    getScanRangeLocations(split.getPath().toString(), split.getStart(), split.getLength()));
+        }
+
+        Multimap<Backend, Split> result = null;
+        for (int i = 0; i < 3; ++i) {
+            FederationBackendPolicy policy = new FederationBackendPolicy(NodeSelectionStrategy.CONSISTENT_HASHING);
+            List<TScanRangeLocations> totalScanRangeLocationsList = new ArrayList<>();
+            totalScanRangeLocationsList.addAll(tScanRangeLocationsList);
+            totalScanRangeLocationsList.addAll(localScanRangeLocationsList);
+            // Collections.shuffle(totalScanRangeLocationsList);
+            policy.init();
+            // policy.setScanRangeLocationsList(totalScanRangeLocationsList);
+            Assertions.assertEquals(policy.numBackends(), aliveBackendNum);
+            // for (TScanRangeLocations scanRangeLocations : tScanRangeLocationsList) {
+            //     System.out.println(policy.getNextConsistentBe(scanRangeLocations).getId());
+            // }
+            int totalSplitNum = 0;
+            List<Split> totalSplits = new ArrayList<>();
+            totalSplits.addAll(remoteSplits);
+            totalSplits.addAll(localSplits);
+            // Collections.shuffle(totalSplits);
+            Multimap<Backend, Split> assignment = policy.computeScanRangeAssignment(totalSplits);
+            if (i == 0) {
+                result = ArrayListMultimap.create(assignment);
+            } else {
+                Assertions.assertEquals(result, assignment);
+            }
+            for (Backend backend : assignment.keySet()) {
+                Collection<Split> splits = assignment.get(backend);
+                long ScanBytes = 0L;
+                for (Split split : splits) {
+                    FileSplit fileSplit = (FileSplit) split;
+                    ScanBytes += fileSplit.getLength();
+                    ++totalSplitNum;
+                    if (fileSplit.getHosts() != null && fileSplit.getHosts().length > 0) {
+                        for (String host : fileSplit.getHosts()) {
+                            Assert.assertTrue(totalLocalHosts.contains(host));
+                        }
+                    }
+                    // if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00000-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.100", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00003-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.100", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00009-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00011-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00014-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.106", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00094-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00096-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else if (fileSplit.getPath().equals(new Path("hdfs://HDFS8000871/usr/hive/warehouse/clickbench.db/hits_orc/part-00098-3e24f7d5-f658-4a80-a168-7b215c5a35bf-c000.snappy.orc"))) {
+                    //     Assert.assertEquals("172.30.0.118", backend.getHost());
+                    //     checkedLocalSplit.add(true);
+                    // } else {
+                    // }
+                }
+                System.out.printf("%s -> %d splits, %d bytes\n", backend, splits.size(), ScanBytes);
+            }
+            Assert.assertEquals(totalSplits.size(), totalSplitNum);
+            // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
+            // int variance = 5 * scanRangeSize;
+            Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
+            for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
+                System.out.printf("weight: %s -> %d\n", entry.getKey(), entry.getValue());
+                // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+            }
+        }
     }
 
     private TScanRangeLocations getScanRangeLocations(String path, long startOffset, long size) {

@@ -22,6 +22,7 @@ import org.apache.doris.analysis.TupleDescriptor;
 import org.apache.doris.common.UserException;
 import org.apache.doris.planner.PlanNodeId;
 import org.apache.doris.planner.ScanNode;
+import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.statistics.StatisticalType;
 import org.apache.doris.thrift.TScanRangeLocations;
 
@@ -43,7 +44,7 @@ public abstract class ExternalScanNode extends ScanNode {
     // set to false means this scan node does not need to check column priv.
     protected boolean needCheckColumnPriv;
 
-    protected final FederationBackendPolicy backendPolicy = new FederationBackendPolicy();
+    protected final FederationBackendPolicy backendPolicy = new FederationBackendPolicy(ConnectContext.get().getSessionVariable().enableFileCache ? NodeSelectionStrategy.CONSISTENT_HASHING : NodeSelectionStrategy.RANDOM);
 
     public ExternalScanNode(PlanNodeId id, TupleDescriptor desc, String planNodeName, StatisticalType statisticalType,
             boolean needCheckColumnPriv) {

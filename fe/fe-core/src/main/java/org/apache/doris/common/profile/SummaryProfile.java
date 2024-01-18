@@ -19,12 +19,19 @@ package org.apache.doris.common.profile;
 
 import org.apache.doris.common.util.RuntimeProfile;
 import org.apache.doris.common.util.TimeUtils;
+import org.apache.doris.spi.Split;
+import org.apache.doris.system.Backend;
 import org.apache.doris.thrift.TUnit;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -65,6 +72,7 @@ public class SummaryProfile {
     public static final String GET_PARTITIONS_TIME = "Get PARTITIONS Time";
     public static final String GET_PARTITION_FILES_TIME = "Get PARTITION FILES Time";
     public static final String CREATE_SCAN_RANGE_TIME = "Create Scan Range Time";
+
     public static final String PLAN_TIME = "Plan Time";
     public static final String SCHEDULE_TIME = "Schedule Time";
     public static final String FETCH_RESULT_TIME = "Fetch Result Time";
@@ -75,6 +83,10 @@ public class SummaryProfile {
     public static final String NEREIDS_REWRITE_TIME = "Nereids Rewrite Time";
     public static final String NEREIDS_OPTIMIZE_TIME = "Nereids Optimize Time";
     public static final String NEREIDS_TRANSLATE_TIME = "Nereids Translate Time";
+
+    public static final String COMPUTE_ASSIGNMENT_TIME = "Compute Assignment Time";
+
+    public static final String COMPUTE_ASSIGNMENT_INFO = "Compute Assignment Info";
 
     // These info will display on FE's web ui table, every one will be displayed as
     // a column, so that should not
@@ -87,23 +99,28 @@ public class SummaryProfile {
             WORKLOAD_GROUP, ANALYSIS_TIME,
             PLAN_TIME, JOIN_REORDER_TIME, CREATE_SINGLE_NODE_TIME, QUERY_DISTRIBUTED_TIME,
             INIT_SCAN_NODE_TIME, FINALIZE_SCAN_NODE_TIME, GET_SPLITS_TIME, GET_PARTITIONS_TIME,
-            GET_PARTITION_FILES_TIME, CREATE_SCAN_RANGE_TIME, SCHEDULE_TIME, FETCH_RESULT_TIME,
+            GET_PARTITION_FILES_TIME, CREATE_SCAN_RANGE_TIME, COMPUTE_ASSIGNMENT_TIME, COMPUTE_ASSIGNMENT_INFO, SCHEDULE_TIME, FETCH_RESULT_TIME,
             WRITE_RESULT_TIME, WAIT_FETCH_RESULT_TIME, DORIS_VERSION, IS_NEREIDS, IS_PIPELINE,
             IS_CACHED, TOTAL_INSTANCES_NUM, INSTANCES_NUM_PER_BE, PARALLEL_FRAGMENT_EXEC_INSTANCE, TRACE_ID);
 
     // Ident of each item. Default is 0, which doesn't need to present in this Map.
     // Please set this map for new profile items if they need ident.
-    public static ImmutableMap<String, Integer> EXECUTION_SUMMARY_KEYS_IDENTATION = ImmutableMap.of(
-            JOIN_REORDER_TIME, 1,
-            CREATE_SINGLE_NODE_TIME, 1,
-            QUERY_DISTRIBUTED_TIME, 1,
-            INIT_SCAN_NODE_TIME, 1,
-            FINALIZE_SCAN_NODE_TIME, 1,
-            GET_SPLITS_TIME, 2,
-            GET_PARTITIONS_TIME, 3,
-            GET_PARTITION_FILES_TIME, 3,
-            CREATE_SCAN_RANGE_TIME, 2
-    );
+    public static ImmutableMap<String, Integer> EXECUTION_SUMMARY_KEYS_IDENTATION;
+    static {
+        EXECUTION_SUMMARY_KEYS_IDENTATION = ImmutableMap.<String, Integer>builder()
+                .put(JOIN_REORDER_TIME, 1)
+                .put(CREATE_SINGLE_NODE_TIME, 1)
+                .put(QUERY_DISTRIBUTED_TIME, 1)
+                .put(INIT_SCAN_NODE_TIME, 1)
+                .put(FINALIZE_SCAN_NODE_TIME, 1)
+                .put(GET_SPLITS_TIME, 2)
+                .put(GET_PARTITIONS_TIME, 3)
+                .put(GET_PARTITION_FILES_TIME, 3)
+                .put(CREATE_SCAN_RANGE_TIME, 2)
+                .put(COMPUTE_ASSIGNMENT_TIME, 3)
+                .put(COMPUTE_ASSIGNMENT_INFO, 3)
+                .build();
+    }
 
     private RuntimeProfile summaryProfile;
     private RuntimeProfile executionSummaryProfile;
@@ -140,6 +157,12 @@ public class SummaryProfile {
     private long tempStarTime = -1;
     private long queryFetchResultConsumeTime = 0;
     private long queryWriteResultConsumeTime = 0;
+
+    private long computeAssignmentTime = 0;
+
+    private Multimap<Backend, Split> assignment;
+
+
 
     public SummaryProfile(RuntimeProfile rootProfile) {
         summaryProfile = new RuntimeProfile(SUMMARY_PROFILE_NAME);
@@ -204,6 +227,8 @@ public class SummaryProfile {
         executionSummaryProfile.addInfoString(GET_PARTITIONS_TIME, getPrettyGetPartitionsTime());
         executionSummaryProfile.addInfoString(GET_PARTITION_FILES_TIME, getPrettyGetPartitionFilesTime());
         executionSummaryProfile.addInfoString(CREATE_SCAN_RANGE_TIME, getPrettyCreateScanRangeTime());
+        executionSummaryProfile.addInfoString(COMPUTE_ASSIGNMENT_TIME, getPrettyComputeAssignmentTime());
+        executionSummaryProfile.addInfoString(COMPUTE_ASSIGNMENT_INFO, getPrettyComputeAssignmentStats());
         executionSummaryProfile.addInfoString(SCHEDULE_TIME, getPrettyQueryScheduleFinishTime());
         executionSummaryProfile.addInfoString(FETCH_RESULT_TIME,
                 RuntimeProfile.printCounter(queryFetchResultConsumeTime, TUnit.TIME_MS));
@@ -306,6 +331,15 @@ public class SummaryProfile {
 
     public void freshWriteResultConsumeTime() {
         this.queryWriteResultConsumeTime += TimeUtils.getStartTimeMs() - tempStarTime;
+    }
+
+    public void setComputeAssignmentTime() {
+        this.computeAssignmentTime = TimeUtils.getStartTimeMs();
+    }
+
+
+    public void setComputeAssignment(Multimap<Backend, Split> assignment) {
+        this.assignment = assignment;
     }
 
     public long getQueryBeginTime() {
@@ -527,5 +561,52 @@ public class SummaryProfile {
             return "N/A";
         }
         return RuntimeProfile.printCounter(queryFetchResultFinishTime - queryScheduleFinishTime, TUnit.TIME_MS);
+    }
+
+    private String getPrettyComputeAssignmentTime() {
+        if (getSplitsFinishTime == -1 || computeAssignmentTime == -1) {
+            return "N/A";
+        }
+        return RuntimeProfile.printCounter(computeAssignmentTime - getSplitsFinishTime, TUnit.TIME_MS);
+    }
+
+    private String getPrettyComputeAssignmentStats() {
+        List<Integer> loads = new ArrayList<>(assignment.keySet().size());
+        List<Long> splitBytes = new ArrayList<>(assignment.keySet().size());
+        int totalSplitSize = 0;
+        long totalSplitBytes = 0;
+        for (Backend backend : assignment.keySet()) {
+            Collection<Split> splits = assignment.get(backend);
+            loads.add(splits.size());
+            totalSplitSize += splits.size();
+            totalSplitBytes += splits.stream()
+                        .mapToLong(x -> x.getLength())
+                        .sum();
+        }
+        float avg = totalSplitSize * 1.0f / loads.size();
+        Collections.sort(loads);
+        double t = 0.0;
+        for (Integer x : loads) {
+            t += (x - avg) * (x - avg);
+        }
+        t = Math.sqrt(t / loads.size());
+
+        System.out.printf("Load: min = %d, max = %d, median = %d, stddev = %.2f\n", loads.get(0),
+                loads.get(loads.size() - 1), loads.get(loads.size() / 2), t);
+
+        float splitByteAVG = totalSplitBytes * 1.0f / splitBytes.size();
+        Collections.sort(splitBytes);
+        double splitBytesStdDev = 0.0;
+        for (Long x : splitBytes) {
+            splitBytesStdDev += (x - splitByteAVG) * (x - splitByteAVG);
+        }
+        splitBytesStdDev = Math.sqrt(splitBytesStdDev / splitBytes.size());
+
+        System.out.printf("Load: min = %d, max = %d, median = %d, stddev = %.2f\n", splitBytes.get(0),
+                loads.get(splitBytes.size() - 1), loads.get(splitBytes.size() / 2), splitBytesStdDev);
+
+        return String.format("NodeSelectionStrategy: %s; Split num: Min = %d, Max = %d, Median = %d, StdDev = %.2f; Split num: Min = %d, Max = %d, Median = %d, StdDev = %.2f;", loads.get(0),
+                loads.get(loads.size() - 1), loads.get(loads.size() / 2), t, splitBytes.get(0),
+                loads.get(splitBytes.size() - 1), loads.get(splitBytes.size() / 2), splitBytesStdDev);
     }
 }
