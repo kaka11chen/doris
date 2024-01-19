@@ -22,6 +22,7 @@ import org.apache.doris.spi.Split;
 import lombok.Data;
 import org.apache.hadoop.fs.Path;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Data

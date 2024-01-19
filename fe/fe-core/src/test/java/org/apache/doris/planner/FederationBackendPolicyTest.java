@@ -22,6 +22,7 @@ import org.apache.doris.common.UserException;
 import org.apache.doris.planner.external.FederationBackendPolicy;
 import org.apache.doris.planner.external.FileSplit;
 import org.apache.doris.planner.external.NodeSelectionStrategy;
+import org.apache.doris.planner.external.SplitWeight;
 import org.apache.doris.spi.Split;
 import org.apache.doris.system.Backend;
 import org.apache.doris.system.SystemInfoService;
@@ -33,7 +34,9 @@ import org.apache.doris.thrift.TScanRangeLocations;
 
 import com.google.common.base.Stopwatch;
 import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Ordering;
 import mockit.Mock;
 import mockit.MockUp;
 import mockit.Mocked;
@@ -46,13 +49,16 @@ import org.junit.jupiter.api.Assertions;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class FederationBackendPolicyTest {
     @Mocked
@@ -4266,7 +4272,7 @@ public class FederationBackendPolicyTest {
                     getScanRangeLocations(split.getPath().toString(), split.getStart(), split.getLength()));
         }
 
-        Multimap<Backend, Split> result = null;
+        ListMultimap<Backend, Split> result = null;
         for (int i = 0; i < 3; ++i) {
             FederationBackendPolicy policy = new FederationBackendPolicy(NodeSelectionStrategy.CONSISTENT_HASHING);
             List<TScanRangeLocations> totalScanRangeLocationsList = new ArrayList<>();
@@ -4280,6 +4286,7 @@ public class FederationBackendPolicyTest {
             //     System.out.println(policy.getNextConsistentBe(scanRangeLocations).getId());
             // }
             int totalSplitNum = 0;
+            int minSplitNumPerNode = Integer.MAX_VALUE;;
             List<Split> totalSplits = new ArrayList<>();
             totalSplits.addAll(remoteSplits);
             totalSplits.addAll(localSplits);
@@ -4288,10 +4295,24 @@ public class FederationBackendPolicyTest {
             if (i == 0) {
                 result = ArrayListMultimap.create(assignment);
             } else {
-                Assertions.assertEquals(result, assignment);
+                // Assertions.assertEquals(result.toString(), assignment.toString());
+                // if (areMultimapsEqualIgnoringOrder(result, assignment) == false) {
+                //     areMultimapsEqualIgnoringOrder(result, assignment);
+                //     System.out.println(result);
+                //     System.out.println(assignment);
+                // }
+                Assertions.assertTrue(areMultimapsEqualIgnoringOrder(result, assignment));
+                // Multimap<Backend, Split> sortedMultimap1 = sortValuesInMultimap(result, Comparator.comparing(Split::getPathString));
+                // Multimap<Backend, Split> sortedMultimap2 = sortValuesInMultimap(assignment, Comparator.comparing(Split::getPathString));
+                // Assertions.assertEquals(sortedMultimap1, sortedMultimap2);
+
             }
             for (Backend backend : assignment.keySet()) {
                 Collection<Split> splits = assignment.get(backend);
+                if (splits.size() < minSplitNumPerNode) {
+                    minSplitNumPerNode = splits.size();
+                }
+
                 long ScanBytes = 0L;
                 for (Split split : splits) {
                     FileSplit fileSplit = (FileSplit) split;
@@ -4334,12 +4355,49 @@ public class FederationBackendPolicyTest {
             Assert.assertEquals(totalSplits.size(), totalSplitNum);
             // int avg = (scanRangeNumber * scanRangeSize) / hostNumber;
             // int variance = 5 * scanRangeSize;
+            SplitWeight.rawValueForStandardSplitCount(1);
             Map<Backend, Long> stats = policy.getAssignedWeightPerBackend();
+            int avgSplitNum = totalSplitNum / backendNum;
+            long splitNumVariance = 1;
+            long splitWeightVariance = 5 * SplitWeight.rawValueForStandardSplitCount(1);
+            Long minSplitWeight = stats.values()
+                    .stream()
+                    .min(Long::compare).orElse(0L);
             for (Map.Entry<Backend, Long> entry : stats.entrySet()) {
                 System.out.printf("weight: %s -> %d\n", entry.getKey(), entry.getValue());
-                // Assert.assertTrue(Math.abs(entry.getValue() - avg) < variance);
+                Assert.assertTrue(Math.abs(entry.getValue() - minSplitWeight) <= splitWeightVariance);
+            }
+            for (Backend backend : assignment.keySet()) {
+                Collection<Split> splits = assignment.get(backend);
+                Assert.assertTrue(Math.abs(splits.size() - minSplitNumPerNode) <= splitNumVariance);
             }
         }
+    }
+
+    private static Multimap<Backend, Split> sortValuesInMultimap(
+            Multimap<Backend, Split> multimap, Comparator<Split> comparator) {
+        // Create a new ArrayListMultimap to store the sorted values
+        Multimap<Backend, Split> sortedMultimap = ArrayListMultimap.create();
+
+        // Iterate over each entry in the original multimap
+        for (Backend key : multimap.keySet()) {
+            // Sort the values using the provided comparator
+            List<Split> sortedValues = multimap.get(key).stream()
+                    .sorted(comparator).collect(Collectors.toList());
+
+            // Put the sorted values into the new multimap
+            sortedMultimap.putAll(key, sortedValues);
+        }
+
+        return sortedMultimap;
+    }
+
+    private static <K, V> boolean areMultimapsEqualIgnoringOrder(
+            Multimap<K, V> multimap1, Multimap<K, V> multimap2) {
+        Collection<Map.Entry<K, V>> entries1 = multimap1.entries();
+        Collection<Map.Entry<K, V>> entries2 = multimap2.entries();
+
+        return entries1.containsAll(entries2) && entries2.containsAll(entries1);
     }
 
     @Test

@@ -55,6 +55,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -62,6 +63,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -412,13 +415,14 @@ public class FederationBackendPolicy {
         for (List<Backend> backendList : backendMap.values()) {
             allNodes.addAll(backendList);
         }
+        Collections.sort(allNodes, Comparator.comparing(Backend::getId));
 
         if (allNodes.size() < 2) {
             return;
         }
 
         IndexedPriorityQueue<Backend> maxNodes = new IndexedPriorityQueue<>();
-        for (Backend node : assignment.keySet()) {
+        for (Backend node : allNodes) {
             maxNodes.addOrUpdate(node, assignedWeightPerBackend.get(node));
         }
 
