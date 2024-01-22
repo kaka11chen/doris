@@ -2250,7 +2250,7 @@ public class Config extends ConfigBase {
             "When file cache is enabled, the number of virtual nodes of each node in the consistent hash algorithm. "
                     + "The larger the value, the more uniform the distribution of the hash algorithm, "
                     + "but it will increase the memory overhead."})
-    public static int virtual_node_number = 2048;
+    public static int virtual_node_number = 256;
 
     @ConfField(description = {
             "控制统计信息的自动触发作业执行记录的持久化行数",

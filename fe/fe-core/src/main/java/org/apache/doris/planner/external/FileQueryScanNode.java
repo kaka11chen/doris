@@ -317,79 +317,8 @@ public abstract class FileQueryScanNode extends FileScanNode {
             params.setProperties(locationProperties);
         }
 
-        // boolean enableShortCircuitRead = HdfsResource.enableShortCircuitRead(locationProperties);
         List<String> pathPartitionKeys = getPathPartitionKeys();
-        // for (Split split : inputSplits) {
-        //     FileSplit fileSplit = (FileSplit) split;
-        //     TFileType locationType;
-        //     if (fileSplit instanceof IcebergSplit
-        //             && ((IcebergSplit) fileSplit).getConfig().containsKey(HMSExternalCatalog.BIND_BROKER_NAME)) {
-        //         locationType = TFileType.FILE_BROKER;
-        //     } else {
-        //         locationType = getLocationType(fileSplit.getPath().toString());
-        //     }
-        //
-        //     TScanRangeLocations curLocations = newLocations();
-        //     // If fileSplit has partition values, use the values collected from hive partitions.
-        //     // Otherwise, use the values in file path.
-        //     boolean isACID = false;
-        //     if (fileSplit instanceof HiveSplit) {
-        //         HiveSplit hiveSplit = (HiveSplit) split;
-        //         isACID = hiveSplit.isACID();
-        //     }
-        //     List<String> partitionValuesFromPath = fileSplit.getPartitionValues() == null
-        //             ? BrokerUtil.parseColumnsFromPath(fileSplit.getPath().toString(), pathPartitionKeys, false, isACID)
-        //             : fileSplit.getPartitionValues();
-        //
-        //     TFileRangeDesc rangeDesc = createFileRangeDesc(fileSplit, partitionValuesFromPath, pathPartitionKeys,
-        //             locationType);
-        //     TFileCompressType fileCompressType = getFileCompressType(fileSplit);
-        //     rangeDesc.setCompressType(fileCompressType);
-        //     if (isACID) {
-        //         HiveSplit hiveSplit = (HiveSplit) split;
-        //         hiveSplit.setTableFormatType(TableFormatType.TRANSACTIONAL_HIVE);
-        //         TTableFormatFileDesc tableFormatFileDesc = new TTableFormatFileDesc();
-        //         tableFormatFileDesc.setTableFormatType(hiveSplit.getTableFormatType().value());
-        //         AcidInfo acidInfo = (AcidInfo) hiveSplit.getInfo();
-        //         TTransactionalHiveDesc transactionalHiveDesc = new TTransactionalHiveDesc();
-        //         transactionalHiveDesc.setPartition(acidInfo.getPartitionLocation());
-        //         List<TTransactionalHiveDeleteDeltaDesc> deleteDeltaDescs = new ArrayList<>();
-        //         for (DeleteDeltaInfo deleteDeltaInfo : acidInfo.getDeleteDeltas()) {
-        //             TTransactionalHiveDeleteDeltaDesc deleteDeltaDesc = new TTransactionalHiveDeleteDeltaDesc();
-        //             deleteDeltaDesc.setDirectoryLocation(deleteDeltaInfo.getDirectoryLocation());
-        //             deleteDeltaDesc.setFileNames(deleteDeltaInfo.getFileNames());
-        //             deleteDeltaDescs.add(deleteDeltaDesc);
-        //         }
-        //         transactionalHiveDesc.setDeleteDeltas(deleteDeltaDescs);
-        //         tableFormatFileDesc.setTransactionalHiveParams(transactionalHiveDesc);
-        //         rangeDesc.setTableFormatParams(tableFormatFileDesc);
-        //     }
-        //
-        //     setScanParams(rangeDesc, fileSplit);
-        //
-        //     curLocations.getScanRange().getExtScanRange().getFileScanRange().addToRanges(rangeDesc);
-        //     scanRangeLocations.add(curLocations);
-        //     // TScanRangeLocation location = new TScanRangeLocation();
-        //     // Backend selectedBackend;
-        //     // if (enableShortCircuitRead) {
-        //     //     // Try to find a local BE if enable hdfs short circuit read
-        //     //     selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), curLocations);
-        //     // } else {
-        //     //     // Use consistent hash to assign the same scan range into the same backend among different queries
-        //     //     selectedBackend = backendPolicy.getNextConsistentBe(curLocations);
-        //     // }
-        //     // setLocationPropertiesIfNecessary(selectedBackend, locationType, locationProperties);
-        //     // location.setBackendId(selectedBackend.getId());
-        //     // location.setServer(new TNetworkAddress(selectedBackend.getHost(), selectedBackend.getBePort()));
-        //     // curLocations.addToLocations(location);
-        //     // LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
-        //     //         curLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
-        //     //         fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
-        //     // scanRangeLocations.add(curLocations);
-        //     // this.totalFileSize += fileSplit.getLength();
-        // }
 
-        // backendPolicy.setScanRangeLocationsList(scanRangeLocations);
         Multimap<Backend, Split> assignment =  backendPolicy.computeScanRangeAssignment(inputSplits);
         if (ConnectContext.get().getExecutor() != null) {
             ConnectContext.get().getExecutor().getSummaryProfile().setComputeAssignmentTime();
@@ -446,7 +375,6 @@ public abstract class FileQueryScanNode extends FileScanNode {
                 setScanParams(rangeDesc, fileSplit);
 
                 curLocations.getScanRange().getExtScanRange().getFileScanRange().addToRanges(rangeDesc);
-                scanRangeLocations.add(curLocations);
                 TScanRangeLocation location = new TScanRangeLocation();
                 setLocationPropertiesIfNecessary(backend, locationType, locationProperties);
                 location.setBackendId(backend.getId());
@@ -460,29 +388,6 @@ public abstract class FileQueryScanNode extends FileScanNode {
             }
         }
 
-
-        // for (int i = 0; i < scanRangeLocations.size(); ++i) {
-        //     TScanRangeLocations eachScanRangeLocations = scanRangeLocations.get(i);
-        //     FileSplit fileSplit = (FileSplit) inputSplits.get(i);
-        //     TFileRangeDesc fileRangeDesc = eachScanRangeLocations.scan_range.ext_scan_range.getFileScanRange().ranges.get(0);
-        //     TScanRangeLocation location = new TScanRangeLocation();
-        //     Backend selectedBackend;
-        //     if (enableShortCircuitRead) {
-        //         // Try to find a local BE if enable hdfs short circuit read
-        //         selectedBackend = backendPolicy.getNextLocalBe(Arrays.asList(fileSplit.getHosts()), eachScanRangeLocations);
-        //     } else {
-        //         // Use consistent hash to assign the same scan range into the same backend among different queries
-        //         selectedBackend = backendPolicy.getNextConsistentBe(eachScanRangeLocations);
-        //     }
-        //     setLocationPropertiesIfNecessary(selectedBackend, fileRangeDesc.getFileType(), locationProperties);
-        //     location.setBackendId(selectedBackend.getId());
-        //     location.setServer(new TNetworkAddress(selectedBackend.getHost(), selectedBackend.getBePort()));
-        //     eachScanRangeLocations.addToLocations(location);
-        //     LOG.debug("assign to backend {} with table split: {} ({}, {}), location: {}",
-        //             eachScanRangeLocations.getLocations().get(0).getBackendId(), fileSplit.getPath(), fileSplit.getStart(),
-        //             fileSplit.getLength(), Joiner.on("|").join(fileSplit.getHosts()));
-        //     this.totalFileSize += fileSplit.getLength();
-        // }
         if (ConnectContext.get().getExecutor() != null) {
             ConnectContext.get().getExecutor().getSummaryProfile().setCreateScanRangeFinishTime();
         }

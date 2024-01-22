@@ -20,14 +20,14 @@ package org.apache.doris.planner.external;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.UserException;
+import org.apache.doris.common.util.ConsistentHash;
 import org.apache.doris.mysql.privilege.UserProperty;
-import org.apache.doris.nereids.trees.expressions.functions.table.Backends;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.resource.Tag;
 import org.apache.doris.spi.Split;
 import org.apache.doris.system.Backend;
 import org.apache.doris.system.BeSelectionPolicy;
-import org.apache.doris.thrift.TScanRangeLocations;
+import org.apache.doris.system.SystemInfoService;
 
 import com.google.common.annotations.VisibleForTesting;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -63,8 +63,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -79,59 +77,38 @@ public class FederationBackendPolicy {
 
     private Map<Backend, Long> assignedWeightPerBackend = Maps.newHashMap();
 
-
-    // private ConsistentHash<TScanRangeLocations, Backend> consistentHash;
-
-    private HashRing<Split, Backend> hashRing;
-
+    private ConsistentHash<Split, Backend> consistentHash;
 
     private int nextBe = 0;
     private boolean initialized = false;
 
-    private long avgNodeScanRangeBytes;
-
-    private long maxImbalanceBytes;
-
-    private long avgScanRangeBytes;
-
     private NodeSelectionStrategy nodeSelectionStrategy;
 
     // Create a ConsistentHash ring may be a time-consuming operation, so we cache it.
-    // private static LoadingCache<HashCacheKey, ConsistentHash<TScanRangeLocations, Backend>> consistentHashCache;
-    //
-    // static {
-    //     consistentHashCache = CacheBuilder.newBuilder().maximumSize(5)
-    //             .build(new CacheLoader<HashCacheKey, ConsistentHash<TScanRangeLocations, Backend>>() {
-    //                 @Override
-    //                 public ConsistentHash<TScanRangeLocations, Backend> load(HashCacheKey key) {
-    //                     return new ConsistentHash<>(Hashing.murmur3_128(), new ScanRangeHash(),
-    //                             new BackendHash(), key.bes, Config.virtual_node_number);
-    //                 }
-    //             });
-    // }
-
-    private static LoadingCache<HashCacheKey, HashRing<Split, Backend>> hashRingCache;
+    private static LoadingCache<HashCacheKey, ConsistentHash<Split, Backend>> consistentHashCache;
 
     static {
-        hashRingCache = CacheBuilder.newBuilder().maximumSize(5)
-                .build(new CacheLoader<HashCacheKey, HashRing<Split, Backend>>() {
+        consistentHashCache = CacheBuilder.newBuilder().maximumSize(5)
+                .build(new CacheLoader<HashCacheKey, ConsistentHash<Split, Backend>>() {
                     @Override
-                    public HashRing<Split, Backend> load(HashCacheKey key) {
-                        return new ConsistentHashRing<>(Hashing.murmur3_128(), new SplitHash(),
-                                new BackendHash(), key.bes, 256);
+                    public ConsistentHash<Split, Backend> load(HashCacheKey key) {
+                        return new ConsistentHash<>(Hashing.murmur3_128(), new SplitHash(),
+                                new BackendHash(), key.bes, Config.virtual_node_number);
                     }
                 });
     }
 
     private static class HashCacheKey {
         // sorted backend ids as key
-        private List<Long> beIds;
+        private List<String> beHashKeys;
         // backends is not part of key, just an attachment
         private List<Backend> bes;
 
         HashCacheKey(List<Backend> backends) {
             this.bes = backends;
-            this.beIds = backends.stream().map(b -> b.getId()).sorted().collect(Collectors.toList());
+            this.beHashKeys = backends.stream().map(b ->
+                            String.format("id: %d, host: %s, port: %d", b.getId(), b.getHost(), b.getHeartbeatPort())).sorted()
+                    .collect(Collectors.toList());
         }
 
         @Override
@@ -142,17 +119,17 @@ public class FederationBackendPolicy {
             if (!(obj instanceof HashCacheKey)) {
                 return false;
             }
-            return Objects.equals(beIds, ((HashCacheKey) obj).beIds);
+            return Objects.equals(beHashKeys, ((HashCacheKey) obj).beHashKeys);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(beIds);
+            return Objects.hash(beHashKeys);
         }
 
         @Override
         public String toString() {
-            return "HashCache{" + "beIds=" + beIds + '}';
+            return "HashCache{" + "beHashKeys=" + beHashKeys + '}';
         }
     }
 
@@ -210,34 +187,11 @@ public class FederationBackendPolicy {
 
         backendMap.putAll(backends.stream().collect(Collectors.groupingBy(Backend::getHost)));
         try {
-            // consistentHash = consistentHashCache.get(new HashCacheKey(backends));
-            hashRing = hashRingCache.get(new HashCacheKey(backends));
+            consistentHash = consistentHashCache.get(new HashCacheKey(backends));
         } catch (ExecutionException e) {
             throw new UserException("failed to get consistent hash", e);
         }
-
     }
-
-    // public void setScanRangeLocationsList(List<TScanRangeLocations> scanRangeLocationsList) {
-    //     // long totalSize = tScanRangeLocationsList.stream().mapToLong(x->x.scan_range.ext_scan_range.file_scan_range.ranges.stream().mapToLong(y -> y.size).sum())
-    //     //         .sum();
-    //     this.scanRangeLocationsList = scanRangeLocationsList;
-    //     long totalSize = 0;
-    //     int totalRangeNum = 0;
-    //     for (TScanRangeLocations scanRangeLocations : scanRangeLocationsList) {
-    //         for (TFileRangeDesc range : scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges) {
-    //             totalSize += range.size;
-    //             ++totalRangeNum;
-    //         }
-    //     }
-    //     avgNodeScanRangeBytes = totalSize / scanRangeLocationsList.size() + 1;
-    //     // avgNodeScanRangeBytes = totalSize / Math.max(backends.size(), 1) + 1;
-    //     avgNodeScanRangeBytes = totalSize / Math.max(backends.size(), 1) + 1;
-    //     maxImbalanceBytes = avgNodeScanRangeBytes * 3;
-    //     // System.out.println("avgScanRangeBytes: " + avgNodeScanRangeBytes + ", maxImbalanceBytes: " + maxImbalanceBytes);
-    //     avgScanRangeBytes = (totalRangeNum > 0) ? (long) Math.ceil((double) totalSize / totalRangeNum) : 0L;
-    //
-    // }
 
     public Backend getNextBe() {
         Backend selectedBackend = backends.get(nextBe++);
@@ -245,44 +199,7 @@ public class FederationBackendPolicy {
         return selectedBackend;
     }
 
-    // public Backend getNextConsistentBe(TScanRangeLocations scanRangeLocations) {
-    //     // return consistentHash.getNode(scanRangeLocations);
-    //     List<Backend> backends = hashRing.get(scanRangeLocations, 3);
-    //     // Backend backend = reBalanceScanRangeForComputeNode(backends, avgNodeScanRangeBytes, scanRangeLocations);
-    //     Backend backend = reBalanceScanRangeForComputeNode(backends, maxImbalanceBytes);
-    //     if (backend == null) {
-    //         throw new RuntimeException("Failed to find backend to execute");
-    //     }
-    //     recordScanRangeAssignment(backend, backends, scanRangeLocations);
-    //     return backend;
-    // }
-
-    public static class ScanRangeLocationsAndSplit {
-        private TScanRangeLocations scanRangeLocations;
-        private Split split;
-
-        public ScanRangeLocationsAndSplit(TScanRangeLocations scanRangeLocations, Split split) {
-            this.scanRangeLocations = scanRangeLocations;
-            this.split = split;
-        }
-
-        public TScanRangeLocations getScanRangeLocations() {
-            return scanRangeLocations;
-        }
-
-        public Split getSplit() {
-            return split;
-        }
-    }
-
     public Multimap<Backend, Split> computeScanRangeAssignment(List<Split> splits) throws UserException {
-        // long totalSplitSize = 0;
-        //     for (Split split : splits) {
-        //         totalSplitSize += split.getLength();
-        //     }
-        //     // System.out.println("avgScanRangeBytes: " + avgNodeScanRangeBytes + ", maxImbalanceBytes: " + maxImbalanceBytes);
-        //     avgScanRangeBytes = (splits.size() > 0) ? (long) Math.ceil((double) totalSplitSize / splits.size()) : 0L;
-
         ListMultimap<Backend, Split> assignment = ArrayListMultimap.create();
 
         List<Split> remainingSplits = null;
@@ -306,30 +223,20 @@ public class FederationBackendPolicy {
                     List<Backend> candidateNodes = selectExactNodes(backendMap, split.getHosts());
 
                     Optional<Backend> chosenNode = candidateNodes.stream()
-                            // .filter(ownerNode -> assignmentStats.getTotalSplitsWeight(ownerNode) < maxSplitsWeightPerNode && assignmentStats.getUnacknowledgedSplitCountForStage(ownerNode) < maxUnacknowledgedSplitsPerTask)
                             .min(comparingLong(ownerNode -> assignedWeightPerBackend.get(ownerNode)));
 
                     if (chosenNode.isPresent()) {
                         Backend selectedBackend = chosenNode.get();
                         assignment.put(selectedBackend, split);
-                        // long addedScans = scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges.stream()
-                        //         .mapToLong(x -> x.size)
-                        //         .sum();
                         assignedWeightPerBackend.put(selectedBackend,
                                 assignedWeightPerBackend.get(selectedBackend) + split.getSplitWeight().getRawValue());
                         splitsToBeRedistributed = true;
                         continue;
                     }
                 }
-                // remainingScanRangeLocationsAndSplits.add(new ScanRangeLocationsAndSplit(scanRangeLocations, split));
                 remainingSplits.add(split);
             }
         } else {
-            // for (int i = 0; i < scanRangeLocationsList.size(); ++i) {
-            //     TScanRangeLocations scanRangeLocations = scanRangeLocationsList.get(i);
-            //     Split split = splits.get(i);
-            //     remainingScanRangeLocationsAndSplits.add(new ScanRangeLocationsAndSplit(scanRangeLocations, split));
-            // }
             remainingSplits = splits;
         }
 
@@ -340,58 +247,37 @@ public class FederationBackendPolicy {
                 candidateNodes = selectExactNodes(backendMap, split.getHosts());
             } else {
                 switch (nodeSelectionStrategy) {
-                    case RANDOM:{
+                    case RANDOM: {
                         randomCandidates.reset();
                         candidateNodes = selectNodes(minCandidates, randomCandidates);
                         break;
-                    } case CONSISTENT_HASHING: {
-                        candidateNodes = hashRing.get(split, 2);
+                    }
+                    case CONSISTENT_HASHING: {
+                        // candidateNodes = hashRing.get(split, 2);
+                        candidateNodes = consistentHash.getNode(split, 2);
                         splitsToBeRedistributed = true;
                         break;
-                    } default: {
+                    }
+                    default: {
                         throw new RuntimeException();
                     }
                 }
             }
             if (candidateNodes.isEmpty()) {
-                // log.debug("No nodes available to schedule %s. Available nodes %s", split,
-                //         nodeMap.getNodesByHost().keys());
-                // throw new TrinoException(NO_NODES_AVAILABLE, "No nodes available to run query");
+                LOG.debug("No nodes available to schedule {}. Available nodes {}", split,
+                        filteredNodes);
+                throw new UserException(SystemInfoService.NO_SCAN_NODE_BACKEND_AVAILABLE_MSG);
             }
 
             Backend selectedBackend = chooseNodeForSplit(candidateNodes);
-            if (selectedBackend != null) {
-                List<Backend> alternativeBackends = new ArrayList<>(candidateNodes);
-                alternativeBackends.remove(selectedBackend);
-                split.setAlternativeHosts(alternativeBackends.stream().map(each -> each.getHost()).collect(Collectors.toList()));
-                assignment.put(selectedBackend, split);
-                assignedWeightPerBackend.put(selectedBackend,
-                        assignedWeightPerBackend.get(selectedBackend) + split.getSplitWeight().getRawValue());
-            } else {
-                // candidateNodes.forEach(schedulableNodes::remove);
-                // if (split.isRemotelyAccessible()) {
-                //     splitWaitingForAnyNode = true;
-                // }
-                // // Exact node set won't matter, if a split is waiting for any node
-                // else if (!splitWaitingForAnyNode) {
-                //     blockedExactNodes.addAll(candidateNodes);
-                // }
-                //
-                // if (splitWaitingForAnyNode && schedulableNodes.isEmpty()) {
-                //     // All nodes assigned, no need to test if we can assign new split
-                //     break;
-                // }
-            }
+            List<Backend> alternativeBackends = new ArrayList<>(candidateNodes);
+            alternativeBackends.remove(selectedBackend);
+            split.setAlternativeHosts(
+                    alternativeBackends.stream().map(each -> each.getHost()).collect(Collectors.toList()));
+            assignment.put(selectedBackend, split);
+            assignedWeightPerBackend.put(selectedBackend,
+                    assignedWeightPerBackend.get(selectedBackend) + split.getSplitWeight().getRawValue());
         }
-
-        // ListenableFuture<Void> blocked;
-        // if (splitWaitingForAnyNode) {
-        //     blocked = toWhenHasSplitQueueSpaceFuture(existingTasks,
-        //             calculateLowWatermark(minPendingSplitsWeightPerTask));
-        // } else {
-        //     blocked = toWhenHasSplitQueueSpaceFuture(blockedExactNodes, existingTasks,
-        //             calculateLowWatermark(minPendingSplitsWeightPerTask));
-        // }
 
         if (splitsToBeRedistributed) {
             equateDistribution(assignment);
@@ -447,10 +333,6 @@ public class FederationBackendPolicy {
             // The difference of 5 between node with maximum and minimum splits is a tradeoff between ratio of
             // misassigned splits and assignment uniformity. Using larger numbers doesn't reduce the number of
             // misassigned splits greatly (in absolute values).
-            // if (assignedScanBytesPerBackend.get(maxNode) - assignedScanBytesPerBackend.get(minNode)
-            //         <= SplitWeight.rawValueForStandardSplitCount(5)) {
-            //     return;
-            // }
             if (assignedWeightPerBackend.get(maxNode) - assignedWeightPerBackend.get(minNode)
                     <= SplitWeight.rawValueForStandardSplitCount(1)) {
                 return;
@@ -458,14 +340,9 @@ public class FederationBackendPolicy {
 
             // move split from max to min
             Split redistributedSplit = redistributeSplit(assignment, maxNode, minNode);
-            // assignmentStats.removeAssignedSplit(maxNode, redistributed.getSplitWeight());
-            // assignmentStats.addAssignedSplit(minNode, redistributed.getSplitWeight());
 
-            // assignedScanBytesPerBackend.put(maxNode, assignedScanBytesPerBackend.get(maxNode) - redistributed.getSplit().getSplitWeight().getRawValue());
-            // assignedScanBytesPerBackend.put(minNode, assignedScanBytesPerBackend.get(minNode) + redistributed.getSplit().getSplitWeight().getRawValue());
-
-
-            assignedWeightPerBackend.put(maxNode, assignedWeightPerBackend.get(maxNode) - redistributedSplit.getSplitWeight().getRawValue());
+            assignedWeightPerBackend.put(maxNode,
+                    assignedWeightPerBackend.get(maxNode) - redistributedSplit.getSplitWeight().getRawValue());
             assignedWeightPerBackend.put(minNode, addExact(
                     assignedWeightPerBackend.get(minNode), redistributedSplit.getSplitWeight().getRawValue()));
 
@@ -529,18 +406,6 @@ public class FederationBackendPolicy {
             if (splitHost.equals(host)) {
                 return true;
             }
-            // InetAddress inetAddress;
-            // try {
-            //     inetAddress = address.toInetAddress();
-            // }
-            // catch (UnknownHostException e) {
-            //     continue;
-            // }
-            // if (!address.hasPort()) {
-            //     Set<Backend> localNodes = nodesByHost.get(inetAddress);
-            //     return localNodes.stream()
-            //             .anyMatch(node -> node.getHostAndPort().equals(nodeAddress));
-            // }
         }
         return false;
     }
@@ -551,46 +416,10 @@ public class FederationBackendPolicy {
             if (splitHost.equals(host)) {
                 return true;
             }
-            // InetAddress inetAddress;
-            // try {
-            //     inetAddress = address.toInetAddress();
-            // }
-            // catch (UnknownHostException e) {
-            //     continue;
-            // }
-            // if (!address.hasPort()) {
-            //     Set<Backend> localNodes = nodesByHost.get(inetAddress);
-            //     return localNodes.stream()
-            //             .anyMatch(node -> node.getHostAndPort().equals(nodeAddress));
-            // }
         }
         return false;
     }
 
-    /**
-     * Helper method to determine if a split is local to a node irrespective of whether splitAddresses contain port information or not
-     */
-    // private static boolean isSplitLocal(List<HostAddress> splitAddresses, HostAddress nodeAddress, SetMultimap<InetAddress, Backend> nodesByHost)
-    // {
-    //     for (HostAddress address : splitAddresses) {
-    //         if (nodeAddress.equals(address)) {
-    //             return true;
-    //         }
-    //         InetAddress inetAddress;
-    //         try {
-    //             inetAddress = address.toInetAddress();
-    //         }
-    //         catch (UnknownHostException e) {
-    //             continue;
-    //         }
-    //         if (!address.hasPort()) {
-    //             Set<Backend> localNodes = nodesByHost.get(inetAddress);
-    //             return localNodes.stream()
-    //                     .anyMatch(node -> node.getHostAndPort().equals(nodeAddress));
-    //         }
-    //     }
-    //     return false;
-    // }
     public static List<Backend> selectExactNodes(Map<String, List<Backend>> backendMap, String[] hosts) {
         Set<Backend> chosen = new LinkedHashSet<>();
 
@@ -599,49 +428,7 @@ public class FederationBackendPolicy {
                 backendMap.get(host).stream()
                         .forEach(chosen::add);
             }
-
-            //     // consider a split with a host without a port as being accessible by all nodes in that host
-            //     if (!host.hasPort()) {
-            //         InetAddress address;
-            //         try {
-            //             address = host.toInetAddress();
-            //         }
-            //         catch (UnknownHostException e) {
-            //             // skip hosts that don't resolve
-            //             continue;
-            //         }
-            //
-            //         nodeMap.getNodesByHost().get(address).stream()
-            //                 .filter(node -> includeCoordinator || !coordinatorIds.contains(node.getNodeIdentifier()))
-            //                 .forEach(chosen::add);
-            //     }
         }
-
-        // // if the chosen set is empty and the host is the coordinator, force pick the coordinator
-        // if (chosen.isEmpty() && !includeCoordinator) {
-        //     for (HostAddress host : hosts) {
-        //         // In the code below, before calling `chosen::add`, it could have been checked that
-        //         // `coordinatorIds.contains(node.getNodeIdentifier())`. But checking the condition isn't necessary
-        //         // because every node satisfies it. Otherwise, `chosen` wouldn't have been empty.
-        //
-        //         chosen.addAll(nodeMap.getNodesByHostAndPort().get(host));
-        //
-        //         // consider a split with a host without a port as being accessible by all nodes in that host
-        //         if (!host.hasPort()) {
-        //             InetAddress address;
-        //             try {
-        //                 address = host.toInetAddress();
-        //             }
-        //             catch (UnknownHostException e) {
-        //                 // skip hosts that don't resolve
-        //                 continue;
-        //             }
-        //
-        //             chosen.addAll(nodeMap.getNodesByHost().get(address));
-        //         }
-        //     }
-        // }
-
         return ImmutableList.copyOf(chosen);
     }
 
@@ -671,93 +458,6 @@ public class FederationBackendPolicy {
         return chosenNode;
     }
 
-    // private Backend reBalanceScanRangeForComputeNode(List<Backend> backends, long avgNodeScanRangeBytes,
-    //         TScanRangeLocations scanRangeLocations) {
-    //     if (backends == null || backends.isEmpty()) {
-    //         return null;
-    //     }
-    //
-    //     Backend res = null;
-    //     long addedScans = scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges.stream().mapToLong(x -> x.size)
-    //             .sum();
-    //     for (Backend backend : backends) {
-    //         long assignedScanRanges = assignedScansPerComputeNode.get(backend);
-    //         if (assignedScanRanges + addedScans < avgNodeScanRangeBytes * 1.1) {
-    //             res = backend;
-    //             break;
-    //         }
-    //     }
-    //     if (res == null) {
-    //         res = backends.get(0);
-    //     }
-    //     return res;
-    // }
-
-    private Backend reBalanceScanRangeForComputeNode(List<Backend> backends, long maxImbalanceBytes) {
-        if (backends == null || backends.isEmpty()) {
-            return null;
-        }
-
-        Backend node = null;
-        long minAssignedScanRanges = Long.MAX_VALUE;
-        for (Backend backend : backends) {
-            long assignedScanRanges = assignedWeightPerBackend.get(backend);
-            if (assignedScanRanges < minAssignedScanRanges) {
-                minAssignedScanRanges = assignedScanRanges;
-                node = backend;
-            }
-        }
-        if (maxImbalanceBytes == 0) {
-            return node;
-        }
-
-        for (Backend backend : backends) {
-            long assignedScanRanges = assignedWeightPerBackend.get(backend);
-            if (assignedScanRanges < (minAssignedScanRanges + maxImbalanceBytes)) {
-                node = backend;
-                break;
-            }
-        }
-        return node;
-    }
-
-    // private void recordScanRangeAssignment(Backend worker, List<Backend> backends,
-    //         TScanRangeLocations scanRangeLocations) {
-    //     // workerProvider.selectWorker(worker.getId());
-    //
-    //     // update statistic
-    //     long addedScans = scanRangeLocations.scan_range.ext_scan_range.file_scan_range.ranges.stream()
-    //             .mapToLong(x -> x.size)
-    //             .sum();
-    //     // System.out.println("addedScans: " + addedScans);
-    //     assignedWeightPerBackend.put(worker, assignedWeightPerBackend.get(worker) + addedScans);
-    //     // // the fist item in backends will be assigned if there is no re-balance, we compute re-balance bytes
-    //     // // if the worker is not the first item in backends.
-    //     // if (worker != backends.get(0)) {
-    //     //     reBalanceBytesPerComputeNode.put(worker, reBalanceBytesPerComputeNode.get(worker) + addedScans);
-    //     // }
-    //     //
-    //     // // add scan range params
-    //     // TScanRangeParams scanRangeParams = new TScanRangeParams();
-    //     // scanRangeParams.scan_range = scanRangeLocations.scan_range;
-    //     // assignment.put(worker.getId(), scanNode.getId().asInt(), scanRangeParams);
-    // }
-
-    // Try to find a local BE, if not exists, use `getNextBe` instead
-    // public Backend getNextLocalBe(List<String> hosts, TScanRangeLocations scanRangeLocations) {
-    //     List<Backend> candidateBackends = Lists.newArrayListWithCapacity(hosts.size());
-    //     for (String host : hosts) {
-    //         List<Backend> backends = backendMap.get(host);
-    //         if (CollectionUtils.isNotEmpty(backends)) {
-    //             candidateBackends.add(backends.get(random.nextInt(backends.size())));
-    //         }
-    //     }
-    //
-    //     return CollectionUtils.isEmpty(candidateBackends)
-    //             ? getNextConsistentBe(scanRangeLocations)
-    //             : candidateBackends.get(random.nextInt(candidateBackends.size()));
-    // }
-
     public int numBackends() {
         return backends.size();
     }
@@ -770,20 +470,15 @@ public class FederationBackendPolicy {
         @Override
         public void funnel(Backend backend, PrimitiveSink primitiveSink) {
             primitiveSink.putLong(backend.getId());
-            // primitiveSink.putString(backend.getHost(), StandardCharsets.UTF_8);
-            // primitiveSink.putInt(backend.getBePort());
         }
     }
 
     private static class SplitHash implements Funnel<Split> {
         @Override
-        public void funnel(Split Split, PrimitiveSink primitiveSink) {
-                primitiveSink.putBytes(Split.getPathString().getBytes(StandardCharsets.UTF_8));
-                primitiveSink.putLong(Split.getStart());
-                primitiveSink.putLong(Split.getLength());
-
-                // primitiveSink.putString(desc.path, StandardCharsets.UTF_8);
-                // primitiveSink.putLong(desc.start_offset);
+        public void funnel(Split split, PrimitiveSink primitiveSink) {
+            primitiveSink.putBytes(split.getPathString().getBytes(StandardCharsets.UTF_8));
+            primitiveSink.putLong(split.getStart());
+            primitiveSink.putLong(split.getLength());
         }
     }
 }

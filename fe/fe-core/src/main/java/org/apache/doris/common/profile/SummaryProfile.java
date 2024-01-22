@@ -19,6 +19,7 @@ package org.apache.doris.common.profile;
 
 import org.apache.doris.common.util.RuntimeProfile;
 import org.apache.doris.common.util.TimeUtils;
+import org.apache.doris.planner.external.NodeSelectionStrategy;
 import org.apache.doris.spi.Split;
 import org.apache.doris.system.Backend;
 import org.apache.doris.thrift.TUnit;
@@ -579,9 +580,11 @@ public class SummaryProfile {
             Collection<Split> splits = assignment.get(backend);
             loads.add(splits.size());
             totalSplitSize += splits.size();
-            totalSplitBytes += splits.stream()
-                        .mapToLong(x -> x.getLength())
-                        .sum();
+            long splitBytesPerBackend = splits.stream()
+                    .mapToLong(x -> x.getLength())
+                    .sum();
+            splitBytes.add(splitBytesPerBackend);
+            totalSplitBytes += splitBytesPerBackend;
         }
         float avg = totalSplitSize * 1.0f / loads.size();
         Collections.sort(loads);
@@ -591,7 +594,7 @@ public class SummaryProfile {
         }
         t = Math.sqrt(t / loads.size());
 
-        System.out.printf("Load: min = %d, max = %d, median = %d, stddev = %.2f\n", loads.get(0),
+        System.out.printf("SplitNum: min = %d, max = %d, median = %d, stddev = %.2f\n", loads.get(0),
                 loads.get(loads.size() - 1), loads.get(loads.size() / 2), t);
 
         float splitByteAVG = totalSplitBytes * 1.0f / splitBytes.size();
@@ -602,10 +605,11 @@ public class SummaryProfile {
         }
         splitBytesStdDev = Math.sqrt(splitBytesStdDev / splitBytes.size());
 
-        System.out.printf("Load: min = %d, max = %d, median = %d, stddev = %.2f\n", splitBytes.get(0),
+        System.out.printf("SplitBytes: min = %d, max = %d, median = %d, stddev = %.2f\n", splitBytes.get(0),
                 loads.get(splitBytes.size() - 1), loads.get(splitBytes.size() / 2), splitBytesStdDev);
 
-        return String.format("NodeSelectionStrategy: %s; Split num: Min = %d, Max = %d, Median = %d, StdDev = %.2f; Split num: Min = %d, Max = %d, Median = %d, StdDev = %.2f;", loads.get(0),
+        return String.format("NodeSelectionStrategy: %s; Split num: Min = %d, Max = %d, Median = %d, StdDev = %.2f; Split num: Min = %d, Max = %d, Median = %d, StdDev = %.2f;",
+                NodeSelectionStrategy.CONSISTENT_HASHING, loads.get(0),
                 loads.get(loads.size() - 1), loads.get(loads.size() / 2), t, splitBytes.get(0),
                 loads.get(splitBytes.size() - 1), loads.get(splitBytes.size() / 2), splitBytesStdDev);
     }
