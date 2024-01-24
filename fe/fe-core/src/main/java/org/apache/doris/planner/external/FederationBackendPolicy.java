@@ -30,7 +30,7 @@ import org.apache.doris.system.BeSelectionPolicy;
 import org.apache.doris.system.SystemInfoService;
 
 import com.google.common.annotations.VisibleForTesting;
-import static com.google.common.base.Preconditions.checkArgument;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
@@ -45,8 +45,6 @@ import com.google.common.collect.Sets;
 import com.google.common.hash.Funnel;
 import com.google.common.hash.Hashing;
 import com.google.common.hash.PrimitiveSink;
-import static java.lang.Math.addExact;
-import static java.util.Comparator.comparingLong;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -107,7 +105,8 @@ public class FederationBackendPolicy {
         HashCacheKey(List<Backend> backends) {
             this.bes = backends;
             this.beHashKeys = backends.stream().map(b ->
-                            String.format("id: %d, host: %s, port: %d", b.getId(), b.getHost(), b.getHeartbeatPort())).sorted()
+                            String.format("id: %d, host: %s, port: %d", b.getId(), b.getHost(), b.getHeartbeatPort()))
+                    .sorted()
                     .collect(Collectors.toList());
         }
 
@@ -211,11 +210,10 @@ public class FederationBackendPolicy {
         ResettableRandomizedIterator<Backend> randomCandidates = new ResettableRandomizedIterator<>(filteredNodes);
 
         boolean splitsToBeRedistributed = false;
-        boolean optimizedLocalScheduling = true;
-        int minCandidates = 10;
 
-        // optimizedLocalScheduling enables prioritized assignment of splits to local nodes when splits contain locality information
-        if (optimizedLocalScheduling) {
+        // optimizedLocalScheduling enables prioritized assignment of splits to local nodes when splits contain
+        // locality information
+        if (Config.optimized_local_scheduling) {
             remainingSplits = new ArrayList<>(splits.size());
             for (int i = 0; i < splits.size(); ++i) {
                 Split split = splits.get(i);
@@ -223,7 +221,7 @@ public class FederationBackendPolicy {
                     List<Backend> candidateNodes = selectExactNodes(backendMap, split.getHosts());
 
                     Optional<Backend> chosenNode = candidateNodes.stream()
-                            .min(comparingLong(ownerNode -> assignedWeightPerBackend.get(ownerNode)));
+                            .min(Comparator.comparingLong(ownerNode -> assignedWeightPerBackend.get(ownerNode)));
 
                     if (chosenNode.isPresent()) {
                         Backend selectedBackend = chosenNode.get();
@@ -241,7 +239,6 @@ public class FederationBackendPolicy {
         }
 
         for (Split split : remainingSplits) {
-
             List<Backend> candidateNodes;
             if (!split.isRemotelyAccessible()) {
                 candidateNodes = selectExactNodes(backendMap, split.getHosts());
@@ -249,12 +246,11 @@ public class FederationBackendPolicy {
                 switch (nodeSelectionStrategy) {
                     case RANDOM: {
                         randomCandidates.reset();
-                        candidateNodes = selectNodes(minCandidates, randomCandidates);
+                        candidateNodes = selectNodes(Config.min_random_candidate_num, randomCandidates);
                         break;
                     }
                     case CONSISTENT_HASHING: {
-                        // candidateNodes = hashRing.get(split, 2);
-                        candidateNodes = consistentHash.getNode(split, 2);
+                        candidateNodes = consistentHash.getNode(split, Config.min_consistent_hash_candidate_num);
                         splitsToBeRedistributed = true;
                         break;
                     }
@@ -286,9 +282,9 @@ public class FederationBackendPolicy {
     }
 
     /**
-     * The method tries to make the distribution of splits more uniform. All nodes are arranged into a maxHeap and a minHeap
-     * based on the number of splits that are assigned to them. Splits are redistributed, one at a time, from a maxNode to a
-     * minNode until we have as uniform a distribution as possible.
+     * The method tries to make the distribution of splits more uniform. All nodes are arranged into a maxHeap and
+     * a minHeap based on the number of splits that are assigned to them. Splits are redistributed, one at a time,
+     * from a maxNode to a minNode until we have as uniform a distribution as possible.
      *
      * @param assignment the node-splits multimap after the first and the second stage
      */
@@ -334,7 +330,7 @@ public class FederationBackendPolicy {
             // misassigned splits and assignment uniformity. Using larger numbers doesn't reduce the number of
             // misassigned splits greatly (in absolute values).
             if (assignedWeightPerBackend.get(maxNode) - assignedWeightPerBackend.get(minNode)
-                    <= SplitWeight.rawValueForStandardSplitCount(1)) {
+                    <= SplitWeight.rawValueForStandardSplitCount(Config.max_split_num_variance)) {
                 return;
             }
 
@@ -343,7 +339,7 @@ public class FederationBackendPolicy {
 
             assignedWeightPerBackend.put(maxNode,
                     assignedWeightPerBackend.get(maxNode) - redistributedSplit.getSplitWeight().getRawValue());
-            assignedWeightPerBackend.put(minNode, addExact(
+            assignedWeightPerBackend.put(minNode, Math.addExact(
                     assignedWeightPerBackend.get(minNode), redistributedSplit.getSplitWeight().getRawValue()));
 
             // add max back into maxNodes only if it still has assignments
@@ -433,7 +429,7 @@ public class FederationBackendPolicy {
     }
 
     public static List<Backend> selectNodes(int limit, Iterator<Backend> candidates) {
-        checkArgument(limit > 0, "limit must be at least 1");
+        Preconditions.checkArgument(limit > 0, "limit must be at least 1");
 
         List<Backend> selected = new ArrayList<>(limit);
         while (selected.size() < limit && candidates.hasNext()) {

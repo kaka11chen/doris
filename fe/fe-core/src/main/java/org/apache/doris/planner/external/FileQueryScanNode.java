@@ -39,7 +39,6 @@ import org.apache.doris.datasource.hive.AcidInfo;
 import org.apache.doris.datasource.hive.AcidInfo.DeleteDeltaInfo;
 import org.apache.doris.nereids.glue.translator.PlanTranslatorContext;
 import org.apache.doris.planner.PlanNodeId;
-import org.apache.doris.planner.external.FederationBackendPolicy.ScanRangeLocationsAndSplit;
 import org.apache.doris.planner.external.iceberg.IcebergSplit;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.spi.Split;
@@ -76,7 +75,6 @@ import org.apache.logging.log4j.Logger;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -320,10 +318,10 @@ public abstract class FileQueryScanNode extends FileScanNode {
         List<String> pathPartitionKeys = getPathPartitionKeys();
 
         Multimap<Backend, Split> assignment =  backendPolicy.computeScanRangeAssignment(inputSplits);
-        if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setComputeAssignmentTime();
-            ConnectContext.get().getExecutor().getSummaryProfile().setComputeAssignment(assignment);
-        }
+        // if (ConnectContext.get().getExecutor() != null) {
+        //     ConnectContext.get().getExecutor().getSummaryProfile().setComputeAssignmentTime();
+        //     ConnectContext.get().getExecutor().getSummaryProfile().setComputeAssignment(assignment);
+        // }
         for (Backend backend : assignment.keySet()) {
             Collection<Split> splits = assignment.get(backend);
             for (Split split : splits) {
@@ -345,8 +343,8 @@ public abstract class FileQueryScanNode extends FileScanNode {
                     isACID = hiveSplit.isACID();
                 }
                 List<String> partitionValuesFromPath = fileSplit.getPartitionValues() == null
-                        ? BrokerUtil.parseColumnsFromPath(fileSplit.getPath().toString(), pathPartitionKeys, false, isACID)
-                        : fileSplit.getPartitionValues();
+                        ? BrokerUtil.parseColumnsFromPath(fileSplit.getPath().toString(), pathPartitionKeys,
+                        false, isACID) : fileSplit.getPartitionValues();
 
                 TFileRangeDesc rangeDesc = createFileRangeDesc(fileSplit, partitionValuesFromPath, pathPartitionKeys,
                         locationType);

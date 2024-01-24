@@ -94,8 +94,7 @@ public class ConsistentHash<K, N> {
         }
     }
 
-    public List<N> getNode(K key, int count)
-    {
+    public List<N> getNode(K key, int count) {
         int nodeCount = ring.values().size();
         if (count > nodeCount) {
             count = nodeCount;

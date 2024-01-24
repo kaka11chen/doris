@@ -30,13 +30,11 @@ public interface Split {
 
     Object getInfo();
 
-    default SplitWeight getSplitWeight()
-    {
+    default SplitWeight getSplitWeight() {
         return SplitWeight.standard();
     }
 
-    default boolean isRemotelyAccessible()
-    {
+    default boolean isRemotelyAccessible() {
         return true;
     }
 
