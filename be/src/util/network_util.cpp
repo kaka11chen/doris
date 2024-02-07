@@ -78,7 +78,28 @@ bool is_valid_ip(const std::string& ip) {
     return (inet_pton(AF_INET6, ip.data(), buf) > 0) || (inet_pton(AF_INET, ip.data(), buf) > 0);
 }
 
+// Function to perform DNS resolution with cache
 Status hostname_to_ip(const std::string& host, std::string& ip) {
+    // Get the singleton instance of the DNS cache
+    DnsCache& dnsCache = DnsCache::getInstance();
+
+    // Check if the entry exists in the cache
+    if (dnsCache.hasEntry(host)) {
+        // If yes, retrieve the IP address from the cache
+        ip = dnsCache.getEntry(host);
+        return Status::OK();
+    } else {
+        // If not, perform DNS resolution and add the entry to the cache
+        RETURN_IF_ERROR(_hostname_to_ip(host, ip));
+
+        // Add the entry to the cache
+        dnsCache.addEntry(host, ip);
+
+        return Status::OK();
+    }
+}
+
+Status _hostname_to_ip(const std::string& host, std::string& ip) {
     auto start = std::chrono::high_resolution_clock::now();
     Status status = hostname_to_ipv4(host, ip);
     if (status.ok()) {
