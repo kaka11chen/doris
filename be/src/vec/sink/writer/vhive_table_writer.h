@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <gen_cpp/DataSinks_types.h>
 #include <stddef.h>
 
 #include <string>
@@ -58,18 +59,16 @@ private:
     //    std::string _escape_path_name(const std::string& path);
 
     std::string _get_file_extension(TFileFormatType::type file_format_type,
-                                    TWriteCompressionType::type write_compress_type);
+                                    THiveCompressionType::type write_compress_type);
 
     std::string _compute_file_name(int bucketNumber);
 
     //    const std::vector<TExpr>& _t_output_expr;
     //    VExprContextSPtrs _output_vexpr_ctxs;
-    const TDataSink* _t_sink;
+    TDataSink _t_sink;
     RuntimeState* _state = nullptr;
     RuntimeProfile* _profile = nullptr;
-    VExprContextSPtrs _data_col_expr_ctxs;
     std::vector<int> _partition_columns_input_index;
-    VExprContextSPtrs _partition_col_expr_ctxs;
     std::unordered_map<std::string, std::shared_ptr<VHivePartitionWriter>> _partitions_to_writers;
     bool _overwrite = false;
 };

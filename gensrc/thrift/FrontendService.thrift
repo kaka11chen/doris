@@ -20,6 +20,7 @@ namespace java org.apache.doris.thrift
 
 include "Status.thrift"
 include "Types.thrift"
+include "DataSinks.thrift"
 include "PaloInternalService.thrift"
 include "PlanNodes.thrift"
 include "Planner.thrift"
@@ -481,6 +482,8 @@ struct TReportExecStatusParams {
   24: optional TQueryStatistics query_statistics // deprecated
 
   25: optional TReportWorkloadRuntimeStatusParams report_workload_runtime_status
+
+  26: optional list<DataSinks.THivePartitionUpdate> hive_partition_updates
 }
 
 struct TFeResult {

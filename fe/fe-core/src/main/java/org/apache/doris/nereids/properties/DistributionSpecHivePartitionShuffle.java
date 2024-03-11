@@ -15,24 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/sink/writer/vhive_utils.h"
+package org.apache.doris.nereids.properties;
 
-#include <gtest/gtest.h>
+import org.apache.doris.analysis.Expr;
 
-namespace doris::vectorized {
+import java.util.List;
 
-class VHiveUtilsTest : public testing::Test {
-public:
-    VHiveUtilsTest() = default;
-    virtual ~VHiveUtilsTest() = default;
-};
+/**
+ * use for shuffle data by partition keys before sink.
+ */
+public class DistributionSpecHivePartitionShuffle extends DistributionSpec {
 
-TEST_F(VHiveUtilsTest, test_make_partition_name) {
-    //    EXPECT_EQ("abc=xyz", VHiveUtils::make_partition_name({"abc"}, {"xyz"}));
-    //    EXPECT_EQ("abc%3Aqqq=xyz%2Fyyy%3Dzzz",
-    //              VHiveUtils::make_partition_name({"abc:qqq"}, {"xyz/yyy=zzz"}));
-    //    EXPECT_EQ("abc=qqq/def=rrr/xyz=sss",
-    //              VHiveUtils::make_partition_name({"abc", "def", "xyz"}, {"qqq", "rrr", "sss"}));
+    private List<Expr> partitionKeys;
+
+    public DistributionSpecHivePartitionShuffle() {
+        super();
+    }
+
+    public List<Expr> getPartitionKeys() {
+        return partitionKeys;
+    }
+
+    public void setPartitionKeys(List<Expr> partitionKeys) {
+        this.partitionKeys = partitionKeys;
+    }
+
+    @Override
+    public boolean satisfy(DistributionSpec other) {
+        return other instanceof DistributionSpecHivePartitionShuffle;
+    }
 }
-
-} // namespace doris::vectorized

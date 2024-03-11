@@ -21,16 +21,38 @@
 package org.apache.doris.planner;
 
 import org.apache.doris.analysis.Analyzer;
+import org.apache.doris.catalog.Column;
+import org.apache.doris.common.AnalysisException;
 import org.apache.doris.datasource.hive.HMSExternalTable;
 import org.apache.doris.thrift.TDataSink;
+import org.apache.doris.thrift.TDataSinkType;
 import org.apache.doris.thrift.TExplainLevel;
+import org.apache.doris.thrift.TFileFormatType;
+import org.apache.doris.thrift.THiveBucket;
+import org.apache.doris.thrift.THiveColumn;
+import org.apache.doris.thrift.THiveColumnType;
+import org.apache.doris.thrift.THiveCompressionType;
+import org.apache.doris.thrift.THiveLocationParams;
+import org.apache.doris.thrift.THivePartition;
+import org.apache.doris.thrift.THiveTableSink;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hadoop.hive.metastore.api.FieldSchema;
+import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 public class HiveTableSink extends DataSink {
 
+    private HMSExternalTable targetTable;
     protected TDataSink tDataSink;
 
-    public HiveTableSink(HMSExternalTable table) {
+    public HiveTableSink(HMSExternalTable targetTable) {
         super();
+        this.targetTable = targetTable;
     }
 
     @Override
@@ -59,9 +81,128 @@ public class HiveTableSink extends DataSink {
         return DataPartition.RANDOM;
     }
 
-    public void init() {
+    public void init(List<Column> insertCols, List<Long> partitionIds) throws AnalysisException {
+        THiveTableSink tSink = new THiveTableSink();
+        tSink.setDbName(targetTable.getDbName());
+        tSink.setTableName(targetTable.getName());
+        List<FieldSchema> partitionKeys = targetTable.getRemoteTable().getPartitionKeys();
+
+        Set<String> nameToPartitions = new HashSet<>();
+        for (FieldSchema partitionKey : partitionKeys) {
+            nameToPartitions.add(partitionKey.getName());
+        }
+        List<FieldSchema> hmsColumns = targetTable.getRemoteTable().getSd().getCols();
+        Set<String> nameToColumns = new HashSet<>();
+        for (FieldSchema column : hmsColumns) {
+            nameToColumns.add(column.getName());
+        }
+        List<THiveColumn> targetColumns = new ArrayList<>();
+        for (Column col : insertCols) {
+            if (nameToPartitions.contains(col.getName())) {
+                THiveColumn tHiveColumn = new THiveColumn();
+                tHiveColumn.setName(col.getName());
+                tHiveColumn.setDataType(col.getType().toThrift());
+                tHiveColumn.setColumnType(THiveColumnType.PARTITION_KEY);
+                targetColumns.add(tHiveColumn);
+            } else if (nameToColumns.contains(col.getName())) {
+                THiveColumn tHiveColumn = new THiveColumn();
+                tHiveColumn.setName(col.getName());
+                tHiveColumn.setDataType(col.getType().toThrift());
+                tHiveColumn.setColumnType(THiveColumnType.REGULAR);
+                targetColumns.add(tHiveColumn);
+            }
+        }
+        tSink.setColumns(targetColumns);
+
+        setPartitionValues(partitionIds, tSink);
+
+        StorageDescriptor sd = targetTable.getRemoteTable().getSd();
+        THiveBucket bucketInfo = new THiveBucket();
+        bucketInfo.setBucketedBy(sd.getBucketCols());
+        bucketInfo.setBucketCount(sd.getNumBuckets());
+        tSink.setBucketInfo(bucketInfo);
+
+        TFileFormatType formatType = getFileFormatType();
+        tSink.setFileFormat(formatType);
+        setCompressType(tSink, formatType);
+
+        THiveLocationParams locationParams = new THiveLocationParams();
+        locationParams.setWritePath(sd.getLocation());
+        locationParams.setTargetPath(sd.getLocation());
+        tSink.setLocation(locationParams);
+
+        tDataSink = new TDataSink(getDataSinkType());
+        tDataSink.setHiveTableSink(tSink);
+    }
+
+    private void setCompressType(THiveTableSink tSink, TFileFormatType formatType) {
+        String compressType;
+        switch (formatType) {
+            case FORMAT_ORC:
+                compressType = targetTable.getRemoteTable().getParameters().get("orc.compress");
+                break;
+            case FORMAT_PARQUET:
+                compressType = targetTable.getRemoteTable().getParameters().get("parquet.compression");
+                break;
+            default:
+                compressType = "uncompressed";
+                break;
+        }
+
+        if ("snappy".equalsIgnoreCase(compressType)) {
+            tSink.setCompressionType(THiveCompressionType.SNAPPY);
+        } else if ("lz4".equalsIgnoreCase(compressType)) {
+            tSink.setCompressionType(THiveCompressionType.LZ4);
+        } else if ("lzo".equalsIgnoreCase(compressType)) {
+            tSink.setCompressionType(THiveCompressionType.LZO);
+        } else if ("zlib".equalsIgnoreCase(compressType)) {
+            tSink.setCompressionType(THiveCompressionType.ZLIB);
+        } else if ("zstd".equalsIgnoreCase(compressType)) {
+            tSink.setCompressionType(THiveCompressionType.ZSTD);
+        } else {
+            tSink.setCompressionType(THiveCompressionType.NO_COMPRESSION);
+        }
+    }
+
+    private void setPartitionValues(List<Long> partitionIds, THiveTableSink tSink) throws AnalysisException {
+        List<THivePartition> partitions = new ArrayList<>();
+        if (partitionIds.isEmpty()) {
+            return;
+        }
+        for (Long partitionId : partitionIds) {
+            String partName = targetTable.getPartitionName(partitionId);
+            if (StringUtils.isNotEmpty(partName)) {
+                THivePartition hivePartition = new THivePartition();
+                // TODO: use partition format type itself.
+                hivePartition.setFileFormat(getFileFormatType());
+                hivePartition.setValues(new ArrayList<>(targetTable.getPartitionNames()));
+                // TODO: set partition location: hivePartition.setLocation();
+                partitions.add(hivePartition);
+            }
+        }
+        tSink.setPartitions(partitions);
+    }
+
+    private TFileFormatType getFileFormatType() {
+        // TODO: use simple format here
+        TFileFormatType fileFormatType;
+        if (targetTable.getRemoteTable().getSd().getInputFormat().toLowerCase().contains("orc")) {
+            fileFormatType = TFileFormatType.FORMAT_ORC;
+        } else {
+            fileFormatType = TFileFormatType.FORMAT_PARQUET;
+        }
+        return fileFormatType;
+    }
+
+    protected TDataSinkType getDataSinkType() {
+        return TDataSinkType.HIVE_TABLE_SINK;
     }
 
     public void complete(Analyzer analyzer) {
+
+    }
+
+    private void toTDataSink() {
+
     }
 }

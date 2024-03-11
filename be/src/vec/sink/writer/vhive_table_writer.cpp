@@ -56,8 +56,16 @@ namespace vectorized {
 
 VHiveTableWriter::VHiveTableWriter(const TDataSink& t_sink,
                                    const VExprContextSPtrs& output_expr_ctxs)
-        : AsyncResultWriter(output_expr_ctxs), _t_sink(&t_sink) {
-    DCHECK(_t_sink->__isset.hive_table_sink);
+        : AsyncResultWriter(output_expr_ctxs), _t_sink(t_sink) {
+    DCHECK(_t_sink.__isset.hive_table_sink);
+    //    fprintf(stderr, "_t_sink->hive_table_sink.table_name: %s\n",
+    //            _t_sink.hive_table_sink.table_name.c_str());
+    //    fprintf(stderr, "_t_sink->hive_table_sink.location.write_path: %s\n",
+    //            _t_sink.hive_table_sink.location.write_path.c_str());
+    //    for (int i = 0; i < _t_sink.hive_table_sink.columns.size(); ++i) {
+    //        fprintf(stderr, "hive_table_sink.columns[%d].name: %s\n", i,
+    //                _t_sink.hive_table_sink.columns[i].name.c_str());
+    //    }
 }
 
 Status VHiveTableWriter::init_properties(ObjectPool* pool) {
@@ -68,26 +76,48 @@ Status VHiveTableWriter::open(RuntimeState* state, RuntimeProfile* profile) {
     _state = state;
     _profile = profile;
 
-    THiveTableSink hive_table_sink = _t_sink->hive_table_sink;
+    //    fprintf(stderr, "_t_sink.hive_table_sink.table_name: %s\n",
+    //            _t_sink.hive_table_sink.table_name.c_str());
+    //    fprintf(stderr, "_t_sink.hive_table_sink.location.write_path: %s\n",
+    //            _t_sink.hive_table_sink.location.write_path.c_str());
+    //    auto& hive_table_sink = _t_sink.hive_table_sink;
+    for (int i = 0; i < _t_sink.hive_table_sink.columns.size(); ++i) {
+        //        fprintf(stderr, "open(): hive_table_sink.columns[%d].name: %s, type: %d\n", i,
+        //                _t_sink.hive_table_sink.columns[i].name.c_str(),
+        //                _t_sink.hive_table_sink.columns[i].column_type);
+        if (_t_sink.hive_table_sink.columns[i].column_type == THiveColumnType::PARTITION_KEY) {
+            _partition_columns_input_index.push_back(i);
+        }
+    }
 
     //    _data_col_expr_ctxs =
     //            _vec_output_expr_ctxs.begin(),
     //            _vec_output_expr_ctxs.begin() + hive_table_sink.data_column_names.size());
-    _data_col_expr_ctxs.insert(
-            _data_col_expr_ctxs.end(), _vec_output_expr_ctxs.begin(),
-            _vec_output_expr_ctxs.begin() + hive_table_sink.data_column_names.size());
-    _partition_col_expr_ctxs.insert(
-            _partition_col_expr_ctxs.end(),
-            _vec_output_expr_ctxs.begin() + hive_table_sink.data_column_names.size(),
-            _vec_output_expr_ctxs.end());
+    //    fprintf(stderr, "hive_table_sink.data_column_names.size(): %ld\n", hive_table_sink.data_column_names.size());
+    //    fprintf(stderr, "_vec_output_expr_ctxs[1]->root()->expr_name().c_str(): %s\n", _vec_output_expr_ctxs[1]->root()->expr_name().c_str());
+    //    _data_col_expr_ctxs.insert(
+    //            _data_col_expr_ctxs.end(), _vec_output_expr_ctxs.begin(),
+    //            _vec_output_expr_ctxs.begin() + hive_table_sink.data_column_names.size());
+    //    _partition_col_expr_ctxs.insert(
+    //            _partition_col_expr_ctxs.end(),
+    //            _vec_output_expr_ctxs.begin() + hive_table_sink.data_column_names.size(),
+    //            _vec_output_expr_ctxs.end());
     return Status::OK();
 }
 
 Status VHiveTableWriter::write(vectorized::Block& block) {
-    fprintf(stderr, "HiveTableSink::send\n");
+    //    fprintf(stderr, "HiveTableSink::send\n");
     std::unordered_map<std::shared_ptr<VHivePartitionWriter>, IColumn::Filter> writer_positions;
 
-    THiveTableSink hive_table_sink = _t_sink->hive_table_sink;
+    auto& hive_table_sink = _t_sink.hive_table_sink;
+
+    if (_partition_columns_input_index.empty()) {
+        std::shared_ptr<VHivePartitionWriter> writer = _create_partition_writer(block, -1, 1);
+        _partitions_to_writers.insert({"", writer});
+        RETURN_IF_ERROR(writer->open(_state, _profile));
+        RETURN_IF_ERROR(writer->write(block));
+        return Status::OK();
+    }
 
     for (int i = 0; i < block.rows(); ++i) {
         //        std::stringstream key_ss;
@@ -100,15 +130,11 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
         //            key_ss << partition_column.column->get_data_at(i).to_string();
         //            key_ss << "/";
         //        }
-        //        std::string key = key_ss.str();
+        //        std::string key = key_ss.str();;
         std::vector<std::string> partition_values = _create_partition_values(block, i);
-        std::string partition_name;
-        if (!hive_table_sink.partition_column_names.empty()) {
-            partition_name = VHiveUtils::make_partition_name(hive_table_sink.partition_column_names,
-                                                             partition_values);
-        }
-
-        fprintf(stderr, "partition_name: %s\n", partition_name.c_str());
+        std::string partition_name = VHiveUtils::make_partition_name(
+                hive_table_sink.columns, _partition_columns_input_index, partition_values);
+        //        fprintf(stderr, "partition_name: %s\n", partition_name.c_str());
 
         auto partition_writer_iter = _partitions_to_writers.find(partition_name);
         if (partition_writer_iter == _partitions_to_writers.end()) {
@@ -119,7 +145,7 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
             //                    _driver_sequence);
             //            auto writer =
             //                    std::make_shared<VHivePartitionWriter>(*_t_sink, key, _vec_output_expr_ctxs);
-            auto writer = _create_partition_writer(block, i, 1);
+            std::shared_ptr<VHivePartitionWriter> writer = _create_partition_writer(block, i, 1);
             //            if (state->enable_pipeline_exec()) {
             //                writer->start_writer(_state, _profile);
             //            } else {
@@ -163,28 +189,33 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
 //}
 
 Status VHiveTableWriter::close(Status status) {
-    for (const auto& pair : _partitions_to_writers) {
-        if (pair.second->close(status) != Status::OK()) {
-            // log it.
+    if (status == Status::OK()) {
+        for (const auto& pair : _partitions_to_writers) {
+            if (pair.second->close(status) != Status::OK()) {
+                // log it.
+            }
+            _state->hive_partition_updates().emplace_back(pair.second->get_partition_update());
         }
+        _partitions_to_writers.clear();
+    } else {
     }
-    _partitions_to_writers.clear();
     return Status::OK();
 }
 
 std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer(
         vectorized::Block& block, int position, int bucket_number) {
-    THiveTableSink hive_table_sink = _t_sink->hive_table_sink;
-    std::vector<std::string> partition_values = _create_partition_values(block, position);
+    auto& hive_table_sink = _t_sink.hive_table_sink;
+    std::vector<std::string> partition_values;
     std::string partition_name;
-    if (!hive_table_sink.partition_column_names.empty()) {
-        partition_name = VHiveUtils::make_partition_name(hive_table_sink.partition_column_names,
-                                                         partition_values);
+    if (!_partition_columns_input_index.empty()) {
+        partition_values = _create_partition_values(block, position);
+        partition_name = VHiveUtils::make_partition_name(
+                hive_table_sink.columns, _partition_columns_input_index, partition_values);
     }
-    std::vector<TWritePartition> partitions = hive_table_sink.partitions;
-    TWriteLocation write_location = hive_table_sink.location;
-    const TWritePartition* existing_partition = nullptr;
-    bool existing_table = false;
+    std::vector<THivePartition> partitions = hive_table_sink.partitions;
+    THiveLocationParams write_location = hive_table_sink.location;
+    const THivePartition* existing_partition = nullptr;
+    bool existing_table = true;
     for (const auto& partition : partitions) {
         if (partition_values == partition.values) {
             existing_partition = &partition;
@@ -194,11 +225,11 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
     TUpdateMode::type update_mode;
     WriteInfo write_info;
     TFileFormatType::type file_format_type;
-    TWriteCompressionType::type write_compress_type;
+    THiveCompressionType::type write_compress_type;
     if (existing_partition == nullptr) { // new partition
         if (existing_table == false) {   // new table
             update_mode = TUpdateMode::NEW;
-            if (hive_table_sink.partition_column_names.empty()) { // new unpartitioned table
+            if (_partition_columns_input_index.empty()) { // new unpartitioned table
                 write_info = {write_location.write_path, write_location.target_path};
             } else { // a new partition in a new partitioned table
                 auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
@@ -211,13 +242,17 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
                 //                }
             }
         } else { // a new partition in an existing partitioned table, or an existing unpartitioned table
-            if (hive_table_sink.partition_column_names.empty()) { // an existing unpartitioned table
+            if (_partition_columns_input_index.empty()) { // an existing unpartitioned table
                 update_mode = !_overwrite ? TUpdateMode::APPEND : TUpdateMode::OVERWRITE;
                 write_info = {write_location.write_path, write_location.target_path};
+                fprintf(stderr, "write_path: %s\n", write_info.write_path.c_str());
+                fprintf(stderr, "target_path: %s\n", write_info.target_path.c_str());
             } else { // a new partition in an existing partitioned table
                 update_mode = TUpdateMode::NEW;
                 auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
                 auto target_path = fmt::format("{}/{}", write_location.target_path, partition_name);
+                fprintf(stderr, "write_path: %s\n", write_path.c_str());
+                fprintf(stderr, "target_path: %s\n", target_path.c_str());
                 write_info = {write_path, target_path};
             }
             // need to get schema from existing table ?
@@ -242,24 +277,27 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
             // need to get schema from existing table ?
         }
     }
-    write_info.write_path =
-            fmt::format("{}/{}{}", write_info.write_path, _compute_file_name(bucket_number),
-                        _get_file_extension(file_format_type, write_compress_type));
 
     return std::make_shared<VHivePartitionWriter>(
-            *_t_sink, "", update_mode, _vec_output_expr_ctxs, hive_table_sink.data_column_names,
-            _data_col_expr_ctxs, write_info, file_format_type, write_compress_type);
+            _t_sink, partition_name, update_mode, _vec_output_expr_ctxs, hive_table_sink.columns,
+            write_info,
+            fmt::format("{}{}", _compute_file_name(bucket_number),
+                        _get_file_extension(file_format_type, write_compress_type)),
+            file_format_type, write_compress_type);
 }
 
 std::vector<std::string> VHiveTableWriter::_create_partition_values(vectorized::Block& block,
                                                                     int position) {
     std::vector<std::string> partition_values;
-    for (int i = 0; i < _partition_col_expr_ctxs.size(); ++i) {
+    for (int i = 0; i < _partition_columns_input_index.size(); ++i) {
         // Assuming `toPartitionValue` function converts column to string
+        int partition_column_idx = _partition_columns_input_index[i];
         vectorized::ColumnWithTypeAndName partition_column =
-                block.get_by_position(_partition_columns_input_index[i]);
-        std::string value = _to_partition_value(_partition_col_expr_ctxs[i]->root()->type(),
-                                                partition_column, position);
+                block.get_by_position(partition_column_idx);
+        std::string value =
+                _to_partition_value(_vec_output_expr_ctxs[partition_column_idx]->root()->type(),
+                                    partition_column, position);
+        //        fprintf(stderr, "value: %s\n", value.c_str());
 
         // Check if value contains only printable ASCII characters
         bool isValid = true;
@@ -296,41 +334,101 @@ std::string VHiveTableWriter::_to_partition_value(const TypeDescriptor& type_des
     if (auto* nullable_column = check_and_get_column<ColumnNullable>(*partition_column.column)) {
         auto* __restrict null_map_data = nullable_column->get_null_map_data().data();
         if (null_map_data[position]) {
+            fprintf(stderr, "position %d is null\n", position);
             return "__HIVE_DEFAULT_PARTITION__";
         }
         column = nullable_column->get_nested_column_ptr();
     } else {
         column = partition_column.column;
     }
+    auto [item, size] = column->get_data_at(position);
     switch (type_desc.type) {
-        //    case TYPE_BOOLEAN: {
-        //        break;
-        //    }
-        //    case TYPE_TINYINT: {
-        //        break;
-        //    }
-        //    case TYPE_SMALLINT: {
-        //        break;
-        //    }
-    case TYPE_INT: {
+    case TYPE_BOOLEAN: {
         vectorized::Field field =
-                vectorized::check_and_get_column<const vectorized::ColumnVector<int32>>(*column)->
-                operator[](position);
-        return std::to_string(field.get<int>());
+                vectorized::check_and_get_column<const ColumnUInt8>(*column)->operator[](position);
+        return std::to_string(field.get<bool>());
+    }
+    case TYPE_TINYINT: {
+        return std::to_string(*reinterpret_cast<const Int8*>(item));
+    }
+    case TYPE_SMALLINT: {
+        return std::to_string(*reinterpret_cast<const Int16*>(item));
+    }
+    case TYPE_INT: {
+        return std::to_string(*reinterpret_cast<const Int32*>(item));
     }
     case TYPE_BIGINT: {
-        vectorized::Field field =
-                vectorized::check_and_get_column<const vectorized::ColumnVector<int64>>(*column)->
-                operator[](position);
-        return std::to_string(field.get<int64>());
+        return std::to_string(*reinterpret_cast<const Int64*>(item));
     }
+    case TYPE_FLOAT: {
+        return std::to_string(*reinterpret_cast<const Float32*>(item));
+    }
+    case TYPE_DOUBLE: {
+        return std::to_string(*reinterpret_cast<const Float64*>(item));
+    }
+    case TYPE_VARCHAR:
+    case TYPE_CHAR:
     case TYPE_STRING: {
-        vectorized::Field field =
-                vectorized::check_and_get_column<const vectorized::ColumnString>(*column)->
-                operator[](position);
-        return field.get<std::string>();
+        fprintf(stderr, "TYPE_STRING\n");
+        //        vectorized::Field field =
+        //                vectorized::check_and_get_column<const ColumnString>(*column)->
+        //                operator[](position);
+        //        return field.get<std::string>();
+        return std::string(item, size);
+    }
+    case TYPE_DATE: {
+        VecDateTimeValue value = binary_cast<int64_t, doris::VecDateTimeValue>(*(int64_t*)item);
+
+        char buf[64];
+        char* pos = value.to_string(buf);
+        return std::string(buf, pos - buf - 1);
+    }
+    case TYPE_DATETIME: {
+        VecDateTimeValue value = binary_cast<int64_t, doris::VecDateTimeValue>(*(int64_t*)item);
+
+        char buf[64];
+        char* pos = value.to_string(buf);
+        return std::string(buf, pos - buf - 1);
+        break;
+    }
+    case TYPE_DATEV2: {
+        DateV2Value<DateV2ValueType> value =
+                binary_cast<uint32_t, DateV2Value<DateV2ValueType>>(*(int32_t*)item);
+
+        char buf[64];
+        char* pos = value.to_string(buf);
+        return std::string(buf, pos - buf - 1);
+    }
+    case TYPE_DATETIMEV2: {
+        DateV2Value<DateTimeV2ValueType> value =
+                binary_cast<uint64_t, DateV2Value<DateTimeV2ValueType>>(*(int64_t*)item);
+
+        char buf[64];
+        char* pos = value.to_string(buf, type_desc.scale);
+        return std::string(buf, pos - buf - 1);
+    }
+    case TYPE_DECIMALV2: {
+        Decimal128V2 value = *(Decimal128V2*)(item);
+        return value.to_string(type_desc.scale);
+    }
+    case TYPE_DECIMAL32: {
+        Decimal32 value = *(Decimal32*)(item);
+        return value.to_string(type_desc.scale);
+    }
+    case TYPE_DECIMAL64: {
+        Decimal64 value = *(Decimal64*)(item);
+        return value.to_string(type_desc.scale);
+    }
+    case TYPE_DECIMAL128I: {
+        Decimal128V3 value = *(Decimal128V3*)(item);
+        return value.to_string(type_desc.scale);
+    }
+    case TYPE_DECIMAL256: {
+        Decimal256 value = *(Decimal256*)(item);
+        return value.to_string(type_desc.scale);
     }
     default: {
+        LOG(WARNING) << fmt::format("Unsupported type for partition {}", type_desc.debug_string());
         return "";
     }
     }
@@ -394,18 +492,18 @@ std::string VHiveTableWriter::_to_partition_value(const TypeDescriptor& type_des
 //}
 
 std::string VHiveTableWriter::_get_file_extension(TFileFormatType::type file_format_type,
-                                                  TWriteCompressionType::type write_compress_type) {
+                                                  THiveCompressionType::type write_compress_type) {
     switch (write_compress_type) {
-    case TWriteCompressionType::SNAPPY: {
+    case THiveCompressionType::SNAPPY: {
         return ".snappy";
     }
-    case TWriteCompressionType::LZ4: {
+    case THiveCompressionType::LZ4: {
         return ".lz4";
     }
-    case TWriteCompressionType::ZLIB: {
+    case THiveCompressionType::ZLIB: {
         return ".zlib";
     }
-    case TWriteCompressionType::ZSTD: {
+    case THiveCompressionType::ZSTD: {
         return ".zstd";
     }
     default: {
@@ -445,6 +543,7 @@ std::string VHiveTableWriter::_compute_file_name(int bucketNumber) {
     boost::uuids::uuid uuid = boost::uuids::random_generator()();
 
     std::string uuid_str = boost::uuids::to_string(uuid);
+    fprintf(stderr, "query_id: %s\n", print_id(_state->query_id()).c_str());
 
     // 结合 fmt 库输出字符串
     return fmt::format("{}_{}", print_id(_state->query_id()), uuid_str);

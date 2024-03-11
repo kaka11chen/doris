@@ -10,15 +10,16 @@ namespace vectorized {
 const std::string VHiveUtils::DEFAULT_DYNAMIC_PARTITION = "__HIVE_DEFAULT_PARTITION__";
 const std::regex VHiveUtils::PATH_CHAR_TO_ESCAPE("[\\x00-\\x1F\"#%'*/:=?\\\\\\x7F\\{\\[\\]\\^]");
 
-std::string VHiveUtils::make_partition_name(const std::vector<std::string>& columns,
+std::string VHiveUtils::make_partition_name(const std::vector<THiveColumn>& columns,
+                                            const std::vector<int>& partition_columns_input_index,
                                             const std::vector<std::string>& values) {
     std::stringstream partitionNameStream;
 
-    for (size_t i = 0; i < columns.size(); i++) {
+    for (size_t i = 0; i < partition_columns_input_index.size(); i++) {
         if (i > 0) {
             partitionNameStream << '/';
         }
-        std::string column = columns[i];
+        std::string column = columns[partition_columns_input_index[i]].name;
         std::string value = values[i];
         // Convert column to lowercase using English locale
         std::transform(column.begin(), column.end(), column.begin(),

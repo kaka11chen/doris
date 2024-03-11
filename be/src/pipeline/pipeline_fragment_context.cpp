@@ -836,7 +836,8 @@ Status PipelineFragmentContext::_create_sink(int sender_id, const TDataSink& thr
     }
     case TDataSinkType::MYSQL_TABLE_SINK:
     case TDataSinkType::JDBC_TABLE_SINK:
-    case TDataSinkType::ODBC_TABLE_SINK: {
+    case TDataSinkType::ODBC_TABLE_SINK:
+    case TDataSinkType::HIVE_TABLE_SINK: {
         sink_ = std::make_shared<TableSinkOperatorBuilder>(next_operator_builder_id(), _sink.get());
         break;
     }

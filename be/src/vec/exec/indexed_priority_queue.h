@@ -13,7 +13,7 @@ struct IndexedPriorityQueueEntry {
     long priority;
     long generation;
 
-//    IndexedPriorityQueueEntry() = default;
+    //    IndexedPriorityQueueEntry() = default;
     IndexedPriorityQueueEntry(T val, long prio, long gen)
             : value(val), priority(prio), generation(gen) {}
 };

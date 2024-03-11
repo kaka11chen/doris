@@ -38,6 +38,7 @@ enum TDataSinkType {
     MULTI_CAST_DATA_STREAM_SINK,
     GROUP_COMMIT_OLAP_TABLE_SINK, // deprecated
     GROUP_COMMIT_BLOCK_SINK,
+    HIVE_TABLE_SINK,
 }
 
 enum TResultSinkType {
@@ -299,10 +300,25 @@ struct THiveBucket {
 }
 
 enum THiveCompressionType {
-    SNAPPY = 3,
-    LZ4 = 4,
-    ZLIB = 6,
-    ZSTD = 7,
+    NO_COMPRESSION = 0,
+    SNAPPY = 1,
+    LZ4 = 2,
+    LZ4F = 3,
+    ZLIB = 4,
+    ZSTD = 5,
+    LZ4HC = 6,
+    LZO = 7
+}
+
+enum THiveColumnType {
+    PARTITION_KEY = 0,
+    REGULAR = 1,
+    SYNTHESIZED = 2
+}
+struct THiveColumn {
+  1: optional string name
+  2: optional Types.TTypeDesc data_type
+  3: optional THiveColumnType column_type
 }
 
 struct THivePartition {
@@ -314,13 +330,12 @@ struct THivePartition {
 struct THiveTableSink {
     1: optional string db_name
     2: optional string table_name
-    3: optional list<string> data_column_names
-    4: optional list<string> partition_column_names
-    5: optional list<THivePartition> partitions
-    6: optional list<THiveBucket> buckets
-    7: optional PlanNodes.TFileFormatType file_format
-    8: optional THiveCompressionType compression_type
-    9: optional THiveLocationParams location
+    3: optional list<THiveColumn> columns
+    4: optional list<THivePartition> partitions
+    5: optional THiveBucket bucket_info
+    6: optional PlanNodes.TFileFormatType file_format
+    7: optional THiveCompressionType compression_type
+    8: optional THiveLocationParams location
 }
 
 enum TUpdateMode {

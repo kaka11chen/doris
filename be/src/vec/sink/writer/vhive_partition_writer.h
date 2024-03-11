@@ -30,18 +30,17 @@ namespace vectorized {
 class Block;
 
 struct WriteInfo {
-    std::string target_path;
     std::string write_path;
+    std::string target_path;
 };
 
 class VHivePartitionWriter {
 public:
-    VHivePartitionWriter(const TDataSink& t_sink, const std::string& partition_key,
+    VHivePartitionWriter(const TDataSink& t_sink, const std::string& partition_name,
                          TUpdateMode::type update_mode, const VExprContextSPtrs& output_expr_ctxs,
-                         const std::vector<std::string>& data_column_names,
-                         const VExprContextSPtrs& data_col_expr_ctxs, WriteInfo write_info,
-                         TFileFormatType::type file_format_type,
-                         TWriteCompressionType::type write_compress_type);
+                         const std::vector<THiveColumn>& columns, WriteInfo write_info,
+                         const std::string& file_name, TFileFormatType::type file_format_type,
+                         THiveCompressionType::type hive_compress_type);
 
     Status init_properties(ObjectPool* pool) {
         _pool = pool;
@@ -58,6 +57,8 @@ public:
 
     Status rollback();
 
+    THivePartitionUpdate get_partition_update();
+
     int64_t written_len() { return _vfile_writer->written_len(); };
 
 private:
@@ -68,17 +69,22 @@ private:
                                         const vectorized::IColumn::Filter* filter,
                                         doris::vectorized::Block* output_block);
 
-    const TDataSink& _t_sink;
+    std::string _path;
 
-    std::string _partition_key;
+    std::string _partition_name;
+
+    TUpdateMode::type _update_mode;
+
+    size_t _row_count = 0;
+    size_t _input_size_in_bytes = 0;
 
     const VExprContextSPtrs& _vec_output_expr_ctxs;
 
-    const std::vector<std::string>& _data_column_names;
-    const VExprContextSPtrs& _data_col_expr_ctxs;
+    const std::vector<THiveColumn>& _columns;
     WriteInfo _write_info;
+    std::string _file_name;
     TFileFormatType::type _file_format_type;
-    TWriteCompressionType::type _write_compress_type;
+    THiveCompressionType::type _hive_compress_type;
 
     // If the result file format is plain text, like CSV, this _file_writer is owned by this FileResultWriter.
     // If the result file format is Parquet, this _file_writer is owned by _parquet_writer.

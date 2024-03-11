@@ -69,7 +69,8 @@ bool vectorsEqual(const std::vector<std::list<int>>& vec1,
     return true;
 }
 
-bool compareVectorOfLists(const std::vector<std::list<int>>& expected, const std::vector<std::list<int>>& actual) {
+bool compareVectorOfLists(const std::vector<std::list<int>>& expected,
+                          const std::vector<std::list<int>>& actual) {
     if (expected.size() != actual.size()) {
         return false;
     }
@@ -89,7 +90,7 @@ TEST_F(SkewedPartitionRebalancerTest, test_rebalance_with_skewness) {
     const int taskBucketCount = 3;
     const long MEGABYTE = 1024 * 1024;
     const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 1 * MEGABYTE; // 1MB
-    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
+    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE;          // 50MB
 
     std::unique_ptr<SkewedPartitionRebalancer> rebalancer(
             new SkewedPartitionRebalancer(partitionCount, taskCount, taskBucketCount,
@@ -123,8 +124,8 @@ TEST_F(SkewedPartitionRebalancerTest, test_rebalance_with_skewness) {
     ASSERT_TRUE(vectorsEqual(
             {{0, 2, 4, 6, 8, 10, 12, 14, 16}, {1, 3, 7, 9, 13, 15}, {5, 11}},
             get_partition_positions(rebalancer, partitionRowCount, partitionCount, 17)));
-    EXPECT_TRUE(compareVectorOfLists({{0, 1}, {1, 0}, {2, 0}}, rebalancer->getPartitionAssignments()));
-
+    EXPECT_TRUE(
+            compareVectorOfLists({{0, 1}, {1, 0}, {2, 0}}, rebalancer->getPartitionAssignments()));
 
     rebalancer->addPartitionRowCount(0, 1000);
     rebalancer->addPartitionRowCount(1, 1000);
@@ -138,9 +139,9 @@ TEST_F(SkewedPartitionRebalancerTest, test_rebalance_with_skewness) {
     ASSERT_TRUE(vectorsEqual(
             {{0, 2, 4, 9, 11, 13}, {1, 3, 5, 10, 12, 14}, {6, 7, 8, 15, 16}},
             get_partition_positions(rebalancer, partitionRowCount, partitionCount, 17)));
-    EXPECT_TRUE(compareVectorOfLists({{0, 1, 2}, {1, 0, 2}, {2, 0, 1}}, rebalancer->getPartitionAssignments()));
+    EXPECT_TRUE(compareVectorOfLists({{0, 1, 2}, {1, 0, 2}, {2, 0, 1}},
+                                     rebalancer->getPartitionAssignments()));
 }
-
 
 TEST_F(SkewedPartitionRebalancerTest, test_rebalance_without_skewness) {
     const int partitionCount = 6;
@@ -148,7 +149,7 @@ TEST_F(SkewedPartitionRebalancerTest, test_rebalance_without_skewness) {
     const int taskBucketCount = 2;
     const long MEGABYTE = 1024 * 1024;
     const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 1 * MEGABYTE; // 1MB
-    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
+    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE;          // 50MB
 
     std::unique_ptr<SkewedPartitionRebalancer> rebalancer(
             new SkewedPartitionRebalancer(partitionCount, taskCount, taskBucketCount,
@@ -174,16 +175,18 @@ TEST_F(SkewedPartitionRebalancerTest, test_rebalance_without_skewness) {
     ASSERT_TRUE(vectorsEqual(
             {{0, 3}, {1, 4}, {2, 5}},
             get_partition_positions(rebalancer, partitionRowCount, partitionCount, 6)));
-    EXPECT_TRUE(compareVectorOfLists({{0}, {1}, {2}, {0}, {1}, {2}}, rebalancer->getPartitionAssignments()));
+    EXPECT_TRUE(compareVectorOfLists({{0}, {1}, {2}, {0}, {1}, {2}},
+                                     rebalancer->getPartitionAssignments()));
 }
 
-TEST_F(SkewedPartitionRebalancerTest, test_no_rebalance_when_data_written_is_less_than_the_rebalance_limit) {
+TEST_F(SkewedPartitionRebalancerTest,
+       test_no_rebalance_when_data_written_is_less_than_the_rebalance_limit) {
     const int partitionCount = 3;
     const int taskCount = 3;
     const int taskBucketCount = 3;
     const long MEGABYTE = 1024 * 1024;
     const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 1 * MEGABYTE; // 1MB
-    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
+    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE;          // 50MB
 
     std::unique_ptr<SkewedPartitionRebalancer> rebalancer(
             new SkewedPartitionRebalancer(partitionCount, taskCount, taskBucketCount,
@@ -209,13 +212,14 @@ TEST_F(SkewedPartitionRebalancerTest, test_no_rebalance_when_data_written_is_les
     EXPECT_TRUE(compareVectorOfLists({{0}, {1}, {2}}, rebalancer->getPartitionAssignments()));
 }
 
-TEST_F(SkewedPartitionRebalancerTest, test_no_rebalance_when_data_written_by_the_partition_is_less_than_writer_sacling_min_data_processed) {
+TEST_F(SkewedPartitionRebalancerTest,
+       test_no_rebalance_when_data_written_by_the_partition_is_less_than_writer_sacling_min_data_processed) {
     const int partitionCount = 3;
     const int taskCount = 3;
     const int taskBucketCount = 3;
     const long MEGABYTE = 1024 * 1024;
     const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
-    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
+    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE;           // 50MB
 
     std::unique_ptr<SkewedPartitionRebalancer> rebalancer(
             new SkewedPartitionRebalancer(partitionCount, taskCount, taskBucketCount,
@@ -241,13 +245,14 @@ TEST_F(SkewedPartitionRebalancerTest, test_no_rebalance_when_data_written_by_the
     EXPECT_TRUE(compareVectorOfLists({{0}, {1}, {2}}, rebalancer->getPartitionAssignments()));
 }
 
-TEST_F(SkewedPartitionRebalancerTest, test_rebalance_partition_to_single_task_in_a_rebalancing_loop) {
+TEST_F(SkewedPartitionRebalancerTest,
+       test_rebalance_partition_to_single_task_in_a_rebalancing_loop) {
     const int partitionCount = 3;
     const int taskCount = 3;
     const int taskBucketCount = 3;
     const long MEGABYTE = 1024 * 1024;
     const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 1 * MEGABYTE; // 1MB
-    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
+    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE;          // 50MB
 
     std::unique_ptr<SkewedPartitionRebalancer> rebalancer(
             new SkewedPartitionRebalancer(partitionCount, taskCount, taskBucketCount,
@@ -290,7 +295,7 @@ TEST_F(SkewedPartitionRebalancerTest, test_consider_skewed_partition_only_within
     const int taskBucketCount = 1;
     const long MEGABYTE = 1024 * 1024;
     const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 1 * MEGABYTE; // 1MB
-    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE; // 50MB
+    const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50 * MEGABYTE;          // 50MB
 
     std::unique_ptr<SkewedPartitionRebalancer> rebalancer(
             new SkewedPartitionRebalancer(partitionCount, taskCount, taskBucketCount,
