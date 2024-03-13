@@ -16,35 +16,19 @@
 // under the License.
 
 #pragma once
-#include <brpc/controller.h>
-#include <bthread/types.h>
-#include <butil/errno.h>
-#include <fmt/format.h>
-#include <gen_cpp/PaloInternalService_types.h>
-#include <gen_cpp/Types_types.h>
-#include <gen_cpp/internal_service.pb.h>
-#include <gen_cpp/types.pb.h>
-#include <glog/logging.h>
-#include <google/protobuf/stubs/callback.h>
-
-#include <atomic>
-#include <cstddef>
-#include <cstdint>
-// IWYU pragma: no_include <bits/chrono.h>
-#include <chrono> // IWYU pragma: keep
-#include <vector>
 
 #include "common/status.h"
-#include "runtime/exec_env.h"
-#include "runtime/types.h"
-#include "vec/data_types/data_type.h"
-#include "vec/exprs/vexpr_fwd.h"
 #include "vec/sink/async_writer_sink.h"
 #include "vec/sink/writer/vhive_table_writer.h"
 
 namespace doris {
 
+class ObjectPool;
+class RowDescriptor;
+
 namespace vectorized {
+
+//class VHiveTableWriter;
 
 inline constexpr char VHIVE_TABLE_SINK[] = "VHiveTableSink";
 

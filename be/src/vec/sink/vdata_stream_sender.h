@@ -50,7 +50,7 @@
 #include "vec/exprs/vexpr_context.h"
 #include "vec/runtime/partitioner.h"
 #include "vec/runtime/vdata_stream_recvr.h"
-#include "vec/sink/scale_writer_partitioning_exchanger.h"
+#include "vec/sink/scale_writer_partitioning_exchanger.hpp"
 #include "vec/sink/vrow_distribution.h"
 #include "vec/sink/vtablet_finder.h"
 
@@ -440,6 +440,8 @@ protected:
     PBlock _ch_pb_block2;
 
     BlockSerializer<Parent> _serializer;
+
+    int _write_count = 1;
 };
 
 #define HANDLE_CHANNEL_STATUS(state, channel, status)    \

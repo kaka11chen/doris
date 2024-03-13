@@ -2523,9 +2523,16 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         } else if (distributionSpec instanceof DistributionSpecTabletIdShuffle) {
             return DataPartition.TABLET_ID;
         } else if (distributionSpec instanceof DistributionSpecHivePartitionShuffle) {
-            DistributionSpecHivePartitionShuffle distributionSpecHash
-                    = (DistributionSpecHivePartitionShuffle) distributionSpec;
-            return new DataPartition(TPartitionType.HASH_PARTITIONED, distributionSpecHash.getPartitionKeys());
+            DistributionSpecHivePartitionShuffle partitionSpecHash =
+                    (DistributionSpecHivePartitionShuffle) distributionSpec;
+            List<Expr> partitionExprs = Lists.newArrayList();
+            List<ExprId> partitionExprIds = partitionSpecHash.getOutputColExprIds();
+            for (ExprId partitionExprId : partitionExprIds) {
+                if (childOutputIds.contains(partitionExprId)) {
+                    partitionExprs.add(context.findSlotRef(partitionExprId));
+                }
+            }
+            return new DataPartition(TPartitionType.HIVE_SINK_SHUFFLE_PARTITIONED, partitionExprs);
         } else {
             throw new RuntimeException("Unknown DistributionSpec: " + distributionSpec);
         }

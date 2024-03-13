@@ -101,18 +101,35 @@ Status DataTypeDateTimeV2SerDe::deserialize_one_cell_from_json(IColumn& column, 
 void DataTypeDateTimeV2SerDe::write_column_to_arrow(const IColumn& column, const NullMap* null_map,
                                                     arrow::ArrayBuilder* array_builder, int start,
                                                     int end) const {
+    //    auto& col_data = static_cast<const ColumnVector<UInt64>&>(column).get_data();
+    //    auto& string_builder = assert_cast<arrow::StringBuilder&>(*array_builder);
+    //    for (size_t i = start; i < end; ++i) {
+    //        char buf[64];
+    //        const DateV2Value<DateTimeV2ValueType>* time_val =
+    //                (const DateV2Value<DateTimeV2ValueType>*)(&col_data[i]);
+    //        int len = time_val->to_buffer(buf);
+    //        if (null_map && (*null_map)[i]) {
+    //            checkArrowStatus(string_builder.AppendNull(), column.get_name(),
+    //                             array_builder->type()->name());
+    //        } else {
+    //            checkArrowStatus(string_builder.Append(buf, len), column.get_name(),
+    //                             array_builder->type()->name());
+    //        }
+    //    }
+
     auto& col_data = static_cast<const ColumnVector<UInt64>&>(column).get_data();
-    auto& string_builder = assert_cast<arrow::StringBuilder&>(*array_builder);
+    auto& timestamp_array_builder = assert_cast<arrow::TimestampBuilder&>(*array_builder);
     for (size_t i = start; i < end; ++i) {
-        char buf[64];
-        const DateV2Value<DateTimeV2ValueType>* time_val =
-                (const DateV2Value<DateTimeV2ValueType>*)(&col_data[i]);
-        int len = time_val->to_buffer(buf);
+        int64_t timestamp = 0;
+        DateV2Value<DateTimeV2ValueType> datetime_val =
+                binary_cast<UInt64, DateV2Value<DateTimeV2ValueType>>(col_data[i]);
+        datetime_val.unix_timestamp(&timestamp, "utc");
+
         if (null_map && (*null_map)[i]) {
-            checkArrowStatus(string_builder.AppendNull(), column.get_name(),
+            checkArrowStatus(timestamp_array_builder.AppendNull(), column.get_name(),
                              array_builder->type()->name());
         } else {
-            checkArrowStatus(string_builder.Append(buf, len), column.get_name(),
+            checkArrowStatus(timestamp_array_builder.Append(timestamp), column.get_name(),
                              array_builder->type()->name());
         }
     }

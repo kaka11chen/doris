@@ -19,19 +19,26 @@
 
 #include <gen_cpp/PlanNodes_types.h>
 
-#include "common/status.h"
 #include "io/fs/file_writer.h"
+#include "vec/columns/column.h"
+#include "vec/exprs/vexpr_fwd.h"
 #include "vec/runtime/vfile_format_transformer.h"
-#include "vec/sink/writer/async_result_writer.h"
 
 namespace doris {
+
+class ObjectPool;
+class RuntimeState;
+class RuntimeProfile;
+
 namespace vectorized {
 
 class Block;
+class VFileFormatTransformer;
 
 struct WriteInfo {
     std::string write_path;
     std::string target_path;
+    TFileType::type file_type;
 };
 
 class VHivePartitionWriter {
@@ -40,7 +47,8 @@ public:
                          TUpdateMode::type update_mode, const VExprContextSPtrs& output_expr_ctxs,
                          const std::vector<THiveColumn>& columns, WriteInfo write_info,
                          const std::string& file_name, TFileFormatType::type file_format_type,
-                         THiveCompressionType::type hive_compress_type);
+                         THiveCompressionType::type hive_compress_type,
+                         std::map<std::string, std::string>& hadoop_conf);
 
     Status init_properties(ObjectPool* pool) {
         _pool = pool;
@@ -53,21 +61,18 @@ public:
 
     Status close(Status);
 
-    Status commit();
-
-    Status rollback();
+    inline size_t written_len() {
+        return _vfile_writer->written_len();
+    }
 
     THivePartitionUpdate get_partition_update();
 
-    int64_t written_len() { return _vfile_writer->written_len(); };
-
 private:
-    Status _projection_block(doris::vectorized::Block& input_block,
-                             doris::vectorized::Block* output_block);
-
     Status _projection_and_filter_block(doris::vectorized::Block& input_block,
                                         const vectorized::IColumn::Filter* filter,
                                         doris::vectorized::Block* output_block);
+
+    std::unique_ptr<orc::Type> _build_orc_type(TypeDescriptor type_descriptor);
 
     std::string _path;
 
@@ -85,6 +90,7 @@ private:
     std::string _file_name;
     TFileFormatType::type _file_format_type;
     THiveCompressionType::type _hive_compress_type;
+    const std::map<std::string, std::string>& _hadoop_conf;
 
     // If the result file format is plain text, like CSV, this _file_writer is owned by this FileResultWriter.
     // If the result file format is Parquet, this _file_writer is owned by _parquet_writer.

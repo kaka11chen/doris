@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/sink/scale_writer_partitioning_exchanger.h"
+#include "vec/sink/scale_writer_partitioning_exchanger.hpp"
 
 #include <gtest/gtest.h>
+#include <vec/core/block.h>
+#include <vec/core/column_with_type_and_name.h>
 #include <vec/data_types/data_type_number.h>
 
 #include <list>
@@ -29,61 +31,6 @@ public:
     ScaleWriterPartitioningExchangerTest() = default;
     virtual ~ScaleWriterPartitioningExchangerTest() = default;
 };
-
-//std::vector<std::list<int>> get_partition_positions(
-//        std::unique_ptr<SkewedPartitionRebalancer>& rebalancer,
-//        std::vector<long>& partitionRowCount, int partition_count, int max_position) {
-//    std::vector<std::list<int>> partitionPositions(rebalancer->getTaskCount());
-//
-//    // 初始化每个分区的位置列表
-//    for (int partition = 0; partition < rebalancer->getTaskCount(); partition++) {
-//        partitionPositions[partition] = std::list<int>();
-//    }
-//
-//    // 遍历每个位置，确定其所属的分区，并将位置添加到对应的分区位置列表中
-//    for (int position = 0; position < max_position; position++) {
-//        int partition = position % partition_count;
-//        partition = rebalancer->getTaskId(partition, partitionRowCount[partition]++);
-//        fprintf(stderr, "partition: %d, position: %d\n", partition, position);
-//        partitionPositions[partition].push_back(position);
-//    }
-//
-//    return partitionPositions;
-//}
-//
-//// 检查两个列表是否相等
-//bool listsEqual(const std::list<int>& list1, const std::list<int>& list2) {
-//    return list1 == list2;
-//}
-//
-//// 检查两个向量是否相等
-//bool vectorsEqual(const std::vector<std::list<int>>& vec1,
-//                  const std::vector<std::list<int>>& vec2) {
-//    if (vec1.size() != vec2.size()) {
-//        return false;
-//    }
-//    for (size_t i = 0; i < vec1.size(); i++) {
-//        if (!listsEqual(vec1[i], vec2[i])) {
-//            return false;
-//        }
-//    }
-//    return true;
-//}
-//
-//bool compareVectorOfLists(const std::vector<std::list<int>>& expected,
-//                          const std::vector<std::list<int>>& actual) {
-//    if (expected.size() != actual.size()) {
-//        return false;
-//    }
-//
-//    for (size_t i = 0; i < expected.size(); ++i) {
-//        if (expected[i] != actual[i]) {
-//            return false;
-//        }
-//    }
-//
-//    return true;
-//}
 
 class TestPartitionFunction {
 public:

@@ -17,7 +17,7 @@
 
 package org.apache.doris.nereids.properties;
 
-import org.apache.doris.analysis.Expr;
+import org.apache.doris.nereids.trees.expressions.ExprId;
 
 import java.util.List;
 
@@ -26,18 +26,20 @@ import java.util.List;
  */
 public class DistributionSpecHivePartitionShuffle extends DistributionSpec {
 
-    private List<Expr> partitionKeys;
+    public static final DistributionSpecHivePartitionShuffle INSTANCE = new DistributionSpecHivePartitionShuffle();
 
-    public DistributionSpecHivePartitionShuffle() {
+    private List<ExprId> outputColExprIds;
+
+    private DistributionSpecHivePartitionShuffle() {
         super();
     }
 
-    public List<Expr> getPartitionKeys() {
-        return partitionKeys;
+    public List<ExprId> getOutputColExprIds() {
+        return outputColExprIds;
     }
 
-    public void setPartitionKeys(List<Expr> partitionKeys) {
-        this.partitionKeys = partitionKeys;
+    public void setOutputColExprIds(List<ExprId> outputColExprIds) {
+        this.outputColExprIds = outputColExprIds;
     }
 
     @Override

@@ -68,10 +68,10 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -365,7 +365,6 @@ public class BindSink implements AnalysisRuleFactory {
         if (sink.getColNames().isEmpty()) {
             bindColumns = table.getBaseSchema(true).stream().collect(ImmutableList.toImmutableList());
         } else {
-            // TODO: process nullable column default values
             bindColumns = sink.getColNames().stream().map(cn -> {
                 Column column = table.getColumn(cn);
                 if (column == null) {
@@ -375,27 +374,15 @@ public class BindSink implements AnalysisRuleFactory {
                 return column;
             }).collect(ImmutableList.toImmutableList());
         }
-
-        List<Long> partitionIds = sink.getPartitions().isEmpty()
-                ? ImmutableList.of()
-                : sink.getPartitions().stream().map(pn -> {
-                    List<FieldSchema> partitionKeys = table.getRemoteTable().getPartitionKeys();
-                    Map<String, FieldSchema> partitionsMap = new HashMap<>();
-                    for (FieldSchema partitionKey : partitionKeys) {
-                        partitionsMap.put(partitionKey.getName(), partitionKey);
-                    }
-                    if (!partitionsMap.containsKey(pn)) {
-                        throw new AnalysisException(String.format("partition %s is not found in table %s",
-                                pn, table.getName()));
-                    }
-                    return table.getPartitionId(pn);
-                }).collect(Collectors.toList());
-
+        Set<String> hivePartitionKeys = table.getRemoteTable()
+                .getPartitionKeys().stream()
+                .map(FieldSchema::getName)
+                .collect(Collectors.toSet());
         LogicalHiveTableSink<?> boundSink = new LogicalHiveTableSink<>(
                 database,
                 table,
                 bindColumns,
-                partitionIds,
+                hivePartitionKeys,
                 child.getOutput().stream()
                         .map(NamedExpression.class::cast)
                         .collect(ImmutableList.toImmutableList()),

@@ -18,19 +18,28 @@
 #pragma once
 
 #include <gen_cpp/DataSinks_types.h>
-#include <stddef.h>
-
-#include <string>
-#include <vector>
-
-#include "common/status.h"
+//#include <stddef.h>
+//
+//#include <string>
+//#include <vector>
+//
+//#include "common/status.h"
 #include "vec/sink/writer/async_result_writer.h"
-#include "vec/sink/writer/vhive_partition_writer.h"
+//#include "vec/sink/writer/vhive_partition_writer.h"
+#include "vec/exprs/vexpr_fwd.h"
 
 namespace doris {
+
+class ObjectPool;
+class RuntimeState;
+class RuntimeProfile;
+struct TypeDescriptor;
+
 namespace vectorized {
 
 class Block;
+class VHivePartitionWriter;
+struct ColumnWithTypeAndName;
 
 class VHiveTableWriter final : public AsyncResultWriter {
 public:

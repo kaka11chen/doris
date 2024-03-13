@@ -17,18 +17,17 @@
 
 #include "vec/sink/vhive_table_sink.h"
 
-#include <gen_cpp/DataSinks_types.h>
-#include <gen_cpp/Descriptors_types.h>
-
-#include <ranges>
-#include <unordered_map>
-
-#include "common/compiler_util.h" // IWYU pragma: keep
-#include "common/object_pool.h"
-#include "common/status.h"
-#include "runtime/descriptors.h"
-#include "runtime/runtime_state.h"
-#include "util/doris_metrics.h"
+//#include <gen_cpp/DataSinks_types.h>
+//#include <gen_cpp/Descriptors_types.h>
+//
+//#include <ranges>
+//#include <unordered_map>
+//
+//#include "common/compiler_util.h" // IWYU pragma: keep
+//#include "common/object_pool.h"
+//#include "common/status.h"
+//#include "runtime/descriptors.h"
+//#include "runtime/runtime_state.h"
 
 namespace doris {
 class TExpr;
@@ -52,6 +51,7 @@ Status VHiveTableSink::close(RuntimeState* state, Status exec_status) {
     if (_closed) {
         return _close_status;
     }
+    RETURN_IF_ERROR(DataSink::close(state, exec_status));
     _close_status = AsyncWriterSink::close(state, exec_status);
     return _close_status;
 }

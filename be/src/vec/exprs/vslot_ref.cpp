@@ -50,9 +50,9 @@ Status VSlotRef::prepare(doris::RuntimeState* state, const doris::RowDescriptor&
                          VExprContext* context) {
     //    fprintf(stderr, "_slot_id: %d\n", _slot_id);
     // HACK
-    if (_slot_id == -1) {
-        _slot_id = 23;
-    }
+    //    if (_slot_id == -1) {
+    //        _slot_id = 23;
+    //    }
     RETURN_IF_ERROR_OR_PREPARED(VExpr::prepare(state, desc, context));
     DCHECK_EQ(_children.size(), 0);
     if (_slot_id == -1) {

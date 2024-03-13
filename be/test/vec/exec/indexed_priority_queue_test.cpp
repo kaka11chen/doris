@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/exec/indexed_priority_queue.h"
+#include "vec/exec/indexed_priority_queue.hpp"
 
 #include <gtest/gtest.h>
 
@@ -30,15 +30,15 @@ public:
 TEST_F(IndexedPriorityQueueTest, test_normal) {
     std::cout << "hello" << std::endl;
     // 创建一个优先队列，按照优先级从低到高排序
-    IndexedPriorityQueue<int, PriorityOrdering::HIGH_TO_LOW> pq;
+    IndexedPriorityQueue<int, IndexedPriorityQueuePriorityOrdering::HIGH_TO_LOW> pq;
 
     // 向优先队列中添加一些元素
-    pq.addOrUpdate(3, 10);
-    pq.addOrUpdate(1, 5);
-    pq.addOrUpdate(4, 15);
-    pq.addOrUpdate(2, 8);
-    pq.addOrUpdate(5, 5);
-    pq.addOrUpdate(6, 5);
+    pq.add_or_update(3, 10);
+    pq.add_or_update(1, 5);
+    pq.add_or_update(4, 15);
+    pq.add_or_update(2, 8);
+    pq.add_or_update(5, 5);
+    pq.add_or_update(6, 5);
 
     // 遍历并打印优先队列中的元素
     std::cout << "Priority Queue elements: ";
@@ -63,7 +63,7 @@ TEST_F(IndexedPriorityQueueTest, test_normal) {
     std::cout << std::endl;
 
     // update elements
-    pq.addOrUpdate(4, 1);
+    pq.add_or_update(4, 1);
 
     // 再次遍历并打印优先队列中的元素
     std::cout << "Priority Queue elements after updating element priority: ";

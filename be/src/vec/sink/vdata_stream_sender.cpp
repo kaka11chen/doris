@@ -337,7 +337,8 @@ VDataStreamSender::VDataStreamSender(RuntimeState* state, ObjectPool* pool, int 
            sink.output_partition.type == TPartitionType::RANDOM ||
            sink.output_partition.type == TPartitionType::RANGE_PARTITIONED ||
            sink.output_partition.type == TPartitionType::TABLET_SINK_SHUFFLE_PARTITIONED ||
-           sink.output_partition.type == TPartitionType::BUCKET_SHFFULE_HASH_PARTITIONED);
+           sink.output_partition.type == TPartitionType::BUCKET_SHFFULE_HASH_PARTITIONED ||
+           sink.output_partition.type == TPartitionType::HIVE_SINK_SHUFFLE_PARTITIONED);
 
     std::map<int64_t, int64_t> fragment_id_to_channel_index;
     _enable_pipeline_exec = state->enable_pipeline_exec();
@@ -409,19 +410,18 @@ VDataStreamSender::~VDataStreamSender() {
 Status VDataStreamSender::init(const TDataSink& tsink) {
     RETURN_IF_ERROR(DataSink::init(tsink));
     const TDataStreamSink& t_stream_sink = tsink.stream_sink;
-    //    if (_part_type == TPartitionType::HASH_PARTITIONED) {
-    //        _partition_count = _channels.size();
-    //        _partitioner.reset(new XXHashPartitioner<ShuffleChannelIds>(_channels.size()));
-    //        RETURN_IF_ERROR(_partitioner->init(t_stream_sink.output_partition.partition_exprs));
-    //    }
     if (_part_type == TPartitionType::HASH_PARTITIONED) {
+        _partition_count = _channels.size();
+        _partitioner.reset(new XXHashPartitioner<ShuffleChannelIds>(_channels.size()));
+        RETURN_IF_ERROR(_partitioner->init(t_stream_sink.output_partition.partition_exprs));
+    } else if (_part_type == TPartitionType::HIVE_SINK_SHUFFLE_PARTITIONED) {
         _partition_count = _channels.size() * 128; // SCALE_WRITERS_MAX_PARTITIONS_PER_WRITER;
         _partitioner.reset(new XXHashPartitioner<ShuffleChannelIds>(_partition_count));
         _partition_function.reset(new HashPartitionFunction(_partitioner.get()));
         //        const long MEGABYTE = 1024 * 1024;
         //        const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 10000 * MEGABYTE; // 1MB
-        //        const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50000 * MEGABYTE;          // 50MB
-        //        const long MEGABYTE = 1024 * 1024;
+        //        const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 50000 * MEGABYTE;           // 50MB
+
         const long MIN_PARTITION_DATA_PROCESSED_REBALANCE_THRESHOLD = 1; // 1MB
         const long MIN_DATA_PROCESSED_REBALANCE_THRESHOLD = 1;           // 50MB
         _rebalancer.reset(
@@ -511,6 +511,10 @@ Status VDataStreamSender::prepare(RuntimeState* state) {
             _profile->add_info_string("Partitioner",
                                       fmt::format("Crc32HashPartitioner({})", _partition_count));
         }
+    } else if (_part_type == TPartitionType::HIVE_SINK_SHUFFLE_PARTITIONED) {
+        RETURN_IF_ERROR(_partitioner->prepare(state, _row_desc));
+        _profile->add_info_string("Partitioner",
+                                  fmt::format("XXHashPartitioner({})", _partition_count));
     }
 
     _bytes_sent_counter = ADD_COUNTER(profile(), "BytesSent", TUnit::BYTES);
@@ -693,40 +697,47 @@ Status VDataStreamSender::send(RuntimeState* state, Block* block, bool eos) {
                 HANDLE_CHANNEL_STATUS(state, current_channel, status);
                 current_channel->ch_roll_pb_block();
             }
+            //            _data_processed += block->bytes();
+            //            _memory_manager.update_memory_usage(block->bytes());
         }
+
+        //        if (_writer_count < _channels.size() && _memory_manager.get_buffered_bytes() >= _max_buffered_bytes / 2) {
+        //            if (_data_processed.load() >= _writer_count * _writer_scaling_min_data_processed
+        //                && _total_memory_used() < _max_memory_per_node * 0.5) {
+        //                _writer_count++;
+        //                std::cout << "Increased task writer count: " << _writer_count << std::endl;
+        //            }
+        //        }
         _current_channel_idx = (_current_channel_idx + 1) % _channels.size();
+
+        //        _current_channel_idx = (_current_channel_idx + 1) % _writer_count;
+
     } else if (_part_type == TPartitionType::HASH_PARTITIONED ||
                _part_type == TPartitionType::BUCKET_SHFFULE_HASH_PARTITIONED) {
-        //        auto rows = block->rows();
-        //        {
-        //            SCOPED_TIMER(_split_block_hash_compute_timer);
-        //            RETURN_IF_ERROR(_partitioner->do_partitioning(state, block, _mem_tracker.get()));
-        //        }
-        //        if (_part_type == TPartitionType::HASH_PARTITIONED) {
-        //            RETURN_IF_ERROR(channel_add_rows(state, _channels, _partition_count,
-        //                                             (uint64_t*)_partitioner->get_channel_ids(), rows,
-        //                                             block, _enable_pipeline_exec ? eos : false));
-        //        } else {
-        //            RETURN_IF_ERROR(channel_add_rows(state, _channel_shared_ptrs, _partition_count,
-        //                                             (uint32_t*)_partitioner->get_channel_ids(), rows,
-        //                                             block, _enable_pipeline_exec ? eos : false));
-        //        }
-
         auto rows = block->rows();
         {
             SCOPED_TIMER(_split_block_hash_compute_timer);
             RETURN_IF_ERROR(_partitioner->do_partitioning(state, block, _mem_tracker.get()));
         }
         if (_part_type == TPartitionType::HASH_PARTITIONED) {
-            std::vector<std::vector<uint32>> assignments =
-                    _scale_writer_partitioning_exchanger->accept(block);
-            RETURN_IF_ERROR(channel_add_rows_with_idx(state, _channels, _channels.size(),
-                                                      assignments, block, eos));
+            RETURN_IF_ERROR(channel_add_rows(state, _channels, _partition_count,
+                                             (uint64_t*)_partitioner->get_channel_ids(), rows,
+                                             block, _enable_pipeline_exec ? eos : false));
         } else {
             RETURN_IF_ERROR(channel_add_rows(state, _channel_shared_ptrs, _partition_count,
                                              (uint32_t*)_partitioner->get_channel_ids(), rows,
                                              block, _enable_pipeline_exec ? eos : false));
         }
+    } else if (_part_type == TPartitionType::HIVE_SINK_SHUFFLE_PARTITIONED) {
+        //        auto rows = block->rows();
+        {
+            SCOPED_TIMER(_split_block_hash_compute_timer);
+            RETURN_IF_ERROR(_partitioner->do_partitioning(state, block, _mem_tracker.get()));
+        }
+        std::vector<std::vector<uint32>> assignments =
+                _scale_writer_partitioning_exchanger->accept(block);
+        RETURN_IF_ERROR(channel_add_rows_with_idx(state, _channels, _channels.size(), assignments,
+                                                  block, eos));
     } else if (_part_type == TPartitionType::TABLET_SINK_SHUFFLE_PARTITIONED) {
         // check out of limit
         RETURN_IF_ERROR(_send_new_partition_batch());
