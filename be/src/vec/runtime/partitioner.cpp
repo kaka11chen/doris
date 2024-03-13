@@ -71,7 +71,6 @@ void Crc32HashPartitioner<ChannelIds>::_do_hash(const ColumnPtr& column,
 template <typename ChannelIds>
 void XXHashPartitioner<ChannelIds>::_do_hash(const ColumnPtr& column, uint64_t* __restrict result,
                                              int /*idx*/) const {
-    fprintf(stderr, "column->get_name: %s\n", column->get_name().c_str());
     column->update_hashes_with_value(result);
 }
 

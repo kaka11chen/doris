@@ -61,11 +61,7 @@ public:
 
     Status close(Status);
 
-    inline size_t written_len() {
-        return _vfile_writer->written_len();
-    }
-
-    THivePartitionUpdate get_partition_update();
+    inline size_t written_len() { return _vfile_writer->written_len(); }
 
 private:
     Status _projection_and_filter_block(doris::vectorized::Block& input_block,
@@ -73,6 +69,8 @@ private:
                                         doris::vectorized::Block* output_block);
 
     std::unique_ptr<orc::Type> _build_orc_type(TypeDescriptor type_descriptor);
+
+    THivePartitionUpdate _build_partition_update();
 
     std::string _path;
 
@@ -99,6 +97,8 @@ private:
     std::unique_ptr<VFileFormatTransformer> _vfile_writer;
 
     ObjectPool* _pool;
+
+    RuntimeState* _state;
 
     //    bool _is_active;
 };

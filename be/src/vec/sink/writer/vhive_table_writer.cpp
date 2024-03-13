@@ -132,7 +132,6 @@ Status VHiveTableWriter::close(Status status) {
             if (pair.second->close(status) != Status::OK()) {
                 // log it.
             }
-            _state->hive_partition_updates().emplace_back(pair.second->get_partition_update());
         }
         _partitions_to_writers.clear();
     } else {
@@ -208,9 +207,7 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
             update_mode = TUpdateMode::APPEND;
             auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
             auto target_path = fmt::format("{}", existing_partition->location.target_path);
-            write_info = {write_path,
-                          target_path,
-                          existing_partition->location.file_type};
+            write_info = {write_path, target_path, existing_partition->location.file_type};
             file_format_type = existing_partition->file_format;
             write_compress_type = hive_table_sink.compression_type;
         } else {

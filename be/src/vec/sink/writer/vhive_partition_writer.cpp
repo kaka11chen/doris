@@ -55,11 +55,14 @@ Status VHivePartitionWriter::close(Status status) {
         RETURN_IF_ERROR(_file_writer_impl->fs()->delete_file(
                 fmt::format("{}/{}", _write_info.write_path, _file_name)));
     }
+    _state->hive_partition_updates().emplace_back(_build_partition_update());
     return Status::OK();
 }
 
 Status VHivePartitionWriter::open(RuntimeState* state, RuntimeProfile* profile) {
     fprintf(stderr, "VHivePartitionWriter::open\n");
+    _state = state;
+
     //    auto& hive_table_sink = _t_sink.hive_table_sink;
     std::vector<TNetworkAddress> broker_addresses;
     //    std::map<std::string, std::string> properties;
@@ -388,7 +391,7 @@ Status VHivePartitionWriter::_projection_and_filter_block(doris::vectorized::Blo
     return status;
 }
 
-THivePartitionUpdate VHivePartitionWriter::get_partition_update() {
+THivePartitionUpdate VHivePartitionWriter::_build_partition_update() {
     THivePartitionUpdate hive_partition_update;
     hive_partition_update.__set_name(_partition_name);
     hive_partition_update.__set_update_mode(_update_mode);
