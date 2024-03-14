@@ -359,8 +359,9 @@ Status VHivePartitionWriter::write(vectorized::Block& block, vectorized::IColumn
     Block output_block;
     RETURN_IF_ERROR(_projection_and_filter_block(block, filter, &output_block));
     RETURN_IF_ERROR(_vfile_writer->write(output_block));
-    _row_count += block.rows();
-    _input_size_in_bytes += block.bytes();
+    _row_count += output_block.rows();
+    fprintf(stderr, "_row_count: %ld\n", _row_count);
+    _input_size_in_bytes += output_block.bytes();
     return Status::OK();
 }
 
@@ -401,6 +402,7 @@ THivePartitionUpdate VHivePartitionWriter::_build_partition_update() {
     hive_partition_update.__set_location(location);
     hive_partition_update.__set_file_names({_file_name});
     hive_partition_update.__set_row_count(_row_count);
+    fprintf(stderr, "_row_count2: %ld\n", _row_count);
     hive_partition_update.__set_file_size(_input_size_in_bytes);
     return hive_partition_update;
 }

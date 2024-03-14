@@ -64,11 +64,29 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
     auto& hive_table_sink = _t_sink.hive_table_sink;
 
     if (_partition_columns_input_index.empty()) {
-        std::shared_ptr<VHivePartitionWriter> writer = _create_partition_writer(block, -1, 1);
-        _partitions_to_writers.insert({"", writer});
-        RETURN_IF_ERROR(writer->open(_state, _profile));
-        RETURN_IF_ERROR(writer->write(block));
-        return Status::OK();
+        auto writer_iter = _partitions_to_writers.find("");
+        if (writer_iter == _partitions_to_writers.end()) {
+            std::shared_ptr<VHivePartitionWriter> writer = _create_partition_writer(block, -1, 1);
+            _partitions_to_writers.insert({"", writer});
+            RETURN_IF_ERROR(writer->open(_state, _profile));
+            RETURN_IF_ERROR(writer->write(block));
+            return Status::OK();
+        } else {
+            const long TARGET_MAX_FILE_SIZE = 100L * 1024L * 1024L; // 100MB
+            std::shared_ptr<VHivePartitionWriter> writer;
+            if (writer_iter->second->written_len() > TARGET_MAX_FILE_SIZE) {
+                static_cast<void>(writer_iter->second->close(Status::OK()));
+                _partitions_to_writers.erase(writer_iter);
+                writer = _create_partition_writer(block, -1, 1);
+                _partitions_to_writers.insert({"", writer});
+                RETURN_IF_ERROR(writer->open(_state, _profile));
+                RETURN_IF_ERROR(writer->write(block));
+            } else {
+                writer = writer_iter->second;
+            }
+            RETURN_IF_ERROR(writer_iter->second->write(block));
+            return Status::OK();
+        }
     }
 
     for (int i = 0; i < block.rows(); ++i) {
