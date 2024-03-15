@@ -475,7 +475,6 @@ Status VDataStreamSender::channel_add_rows_with_idx(
     Status status;
     for (int i = 0; i < num_channels; ++i) {
         if (!channels[i]->is_receiver_eof() && !channel2rows[i].empty()) {
-            fprintf(stderr, "channels[%d]->add_rows()\n", i);
             status = channels[i]->add_rows(block, channel2rows[i], false);
             HANDLE_CHANNEL_STATUS(state, channels[i], status);
             channel2rows[i].clear();

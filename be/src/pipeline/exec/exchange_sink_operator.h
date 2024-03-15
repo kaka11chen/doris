@@ -25,6 +25,7 @@
 #include "exchange_sink_buffer.h"
 #include "operator.h"
 #include "pipeline/pipeline_x/operator.h"
+#include "vec/sink/scale_writer_partitioning_exchanger.hpp"
 #include "vec/sink/vdata_stream_sender.h"
 
 namespace doris {
@@ -33,6 +34,20 @@ class RuntimeState;
 class TDataSink;
 
 namespace pipeline {
+
+class HashPartitionFunction {
+public:
+    HashPartitionFunction(vectorized::PartitionerBase* partitioner) : _partitioner(partitioner) {}
+    int partition_count() { return _partitioner->get_partition_count(); }
+
+    int getPartition(vectorized::Block* block, int position) {
+        uint32_t* partition_ids = (uint32_t*)_partitioner->get_channel_ids();
+        return partition_ids[position];
+    }
+
+private:
+    vectorized::PartitionerBase* _partitioner;
+};
 
 class ExchangeSinkOperatorBuilder final
         : public DataSinkOperatorBuilder<vectorized::VDataStreamSender> {
@@ -129,6 +144,9 @@ public:
     int current_channel_idx; // index of current channel to send to if _random == true
     bool only_local_exchange;
 
+    std::unique_ptr<vectorized::ScaleWriterPartitioningExchanger<HashPartitionFunction>>
+            scale_writer_partitioning_exchanger;
+
 private:
     friend class ExchangeSinkOperatorX;
     friend class vectorized::Channel<ExchangeSinkLocalState>;
@@ -190,6 +208,9 @@ private:
     int _partition_count;
 
     std::shared_ptr<Dependency> _finish_dependency;
+
+    std::unique_ptr<HashPartitionFunction> _partition_function;
+    std::unique_ptr<vectorized::SkewedPartitionRebalancer> _rebalancer = nullptr;
 };
 
 class ExchangeSinkOperatorX final : public DataSinkOperatorX<ExchangeSinkLocalState> {
@@ -219,6 +240,12 @@ private:
     Status channel_add_rows(RuntimeState* state, Channels& channels, int num_channels,
                             const HashValueType* channel_ids, int rows, vectorized::Block* block,
                             bool eos);
+
+    template <typename Channels>
+    Status channel_add_rows_with_idx(RuntimeState* state, Channels& channels, int num_channels,
+                                     std::vector<std::vector<uint32_t>>& channel2rows,
+                                     vectorized::Block* block, bool eos);
+
     RuntimeState* _state = nullptr;
 
     const std::vector<TExpr>& _texprs;
@@ -242,6 +269,9 @@ private:
     bool _transfer_large_data_by_brpc = false;
 
     segment_v2::CompressionTypePB _compression_type;
+
+    size_t _data_processed = 0;
+    int _writer_count = 1;
 };
 
 } // namespace pipeline

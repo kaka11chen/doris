@@ -15,6 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-macros"
+
+#define ARROW_USE_DEPRECATED_INT96_TIMESTAMP
+
+#include <arrow/api.h>
+
+#pragma GCC diagnostic pop
+
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/client.h>
 #include <arrow/scalar.h>

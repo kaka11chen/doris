@@ -1,3 +1,20 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 #include "vec/exec/skewed_partition_rebalancer.h"
 
 #include <cmath>
@@ -31,7 +48,7 @@ SkewedPartitionRebalancer::SkewedPartitionRebalancer(
         int task_id = partition % task_count;
         int bucket_id = task_bucket_ids[task_id]++ % task_bucket_count;
         TaskBucket task_bucket(task_id, bucket_id, task_bucket_count);
-        _partition_assignments[partition].push_back(task_bucket);
+        _partition_assignments[partition].emplace_back(std::move(task_bucket));
     }
 }
 
@@ -230,14 +247,13 @@ void SkewedPartitionRebalancer::rebalance_partitions(long data_processed) {
 
     calculate_partition_data_size(data_processed);
 
-    // Initialize partitionDataSizeSinceLastRebalancePerTask
     for (int partition = 0; partition < _partition_count; partition++) {
         int total_assigned_tasks = _partition_assignments[partition].size();
-        long dataSize = _partition_data_size[partition];
+        long data_size = _partition_data_size[partition];
         _partition_data_size_since_last_rebalance_per_task[partition] =
-                (dataSize - _partition_data_size_at_last_rebalance[partition]) /
+                (data_size - _partition_data_size_at_last_rebalance[partition]) /
                 total_assigned_tasks;
-        _partition_data_size_at_last_rebalance[partition] = dataSize;
+        _partition_data_size_at_last_rebalance[partition] = data_size;
     }
 
     std::vector<IndexedPriorityQueue<int, IndexedPriorityQueuePriorityOrdering::HIGH_TO_LOW>>
@@ -257,17 +273,6 @@ void SkewedPartitionRebalancer::rebalance_partitions(long data_processed) {
         }
     }
 
-    //    // 打印每个 task_bucket_max_partitions 中的元素
-    //    for (auto& priorityQueue : task_bucket_max_partitions) {
-    //        std::cout << "task_bucket_max_partitions Queue elements: ";
-    //        for (auto& elem : priorityQueue) {
-    //            std::cout << elem << " ";
-    //        }
-    //        std::cout << std::endl;
-    //    }
-    //
-    //    fprintf(stderr, "Initialize max_task_buckets and min_task_buckets\n");
-
     IndexedPriorityQueue<TaskBucket, IndexedPriorityQueuePriorityOrdering::HIGH_TO_LOW>
             max_task_buckets;
     IndexedPriorityQueue<TaskBucket, IndexedPriorityQueuePriorityOrdering::LOW_TO_HIGH>
@@ -286,22 +291,9 @@ void SkewedPartitionRebalancer::rebalance_partitions(long data_processed) {
             min_task_buckets.add_or_update(
                     std::move(task_bucket2),
                     _estimated_task_bucket_data_size_since_last_rebalance[task_bucket2.id]);
-            //                max_task_buckets.addOrUpdate(taskBucket, _estimated_task_bucket_data_size_since_last_rebalance[taskBucket.id]);
-            //                min_task_buckets.addOrUpdate(taskBucket, Long.MAX_VALUE - _estimated_task_bucket_data_size_since_last_rebalance[taskBucket.id]);
         }
     }
 
-    //    std::cout << "max_task_buckets: " << std::endl;
-    //    for (auto& elem : max_task_buckets) {
-    //        std::cout << "taskId: " << elem.task_id << ", id: " << elem.id << std::endl;
-    //    }
-    //
-    //    std::cout << "min_task_buckets: " << std::endl;
-    //    for (auto& elem : min_task_buckets) {
-    //        std::cout << "taskId: " << elem.task_id << ", id: " << elem.id << std::endl;
-    //    }
-    //
-    //    fprintf(stderr, "rebalance_based_on_task_bucket_skewness\n");
     rebalance_based_on_task_bucket_skewness(max_task_buckets, min_task_buckets,
                                             task_bucket_max_partitions);
     _data_processed_at_last_rebalance = data_processed;

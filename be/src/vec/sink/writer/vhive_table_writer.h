@@ -18,15 +18,9 @@
 #pragma once
 
 #include <gen_cpp/DataSinks_types.h>
-//#include <stddef.h>
-//
-//#include <string>
-//#include <vector>
-//
-//#include "common/status.h"
-#include "vec/sink/writer/async_result_writer.h"
-//#include "vec/sink/writer/vhive_partition_writer.h"
+
 #include "vec/exprs/vexpr_fwd.h"
+#include "vec/sink/writer/async_result_writer.h"
 
 namespace doris {
 
@@ -59,27 +53,23 @@ public:
 
 private:
     std::shared_ptr<VHivePartitionWriter> _create_partition_writer(vectorized::Block& block,
-                                                                   int position, int bucket_number);
+                                                                   int position);
+
     std::vector<std::string> _create_partition_values(vectorized::Block& block, int position);
+
     std::string _to_partition_value(const TypeDescriptor& type_desc,
                                     const ColumnWithTypeAndName& partition_column, int position);
-    //    std::string _make_part_name(const std::vector<std::string>& columns,
-    //                                const std::vector<std::string>& values);
-    //    std::string _escape_path_name(const std::string& path);
 
     std::string _get_file_extension(TFileFormatType::type file_format_type,
                                     THiveCompressionType::type write_compress_type);
 
-    std::string _compute_file_name(int bucketNumber);
+    std::string _compute_file_name();
 
-    //    const std::vector<TExpr>& _t_output_expr;
-    //    VExprContextSPtrs _output_vexpr_ctxs;
     TDataSink _t_sink;
     RuntimeState* _state = nullptr;
     RuntimeProfile* _profile = nullptr;
     std::vector<int> _partition_columns_input_index;
     std::unordered_map<std::string, std::shared_ptr<VHivePartitionWriter>> _partitions_to_writers;
-    bool _overwrite = false;
 };
 } // namespace vectorized
 } // namespace doris

@@ -1186,6 +1186,9 @@ DEFINE_mBool(check_segment_when_build_rowset_meta, "false");
 
 DEFINE_mInt32(max_s3_client_retry, "10");
 
+// hive sink configurations
+DEFINE_mInt64(hive_sink_max_file_size, "1073741824"); // 1GB
+
 // clang-format off
 #ifdef BE_TEST
 // test s3

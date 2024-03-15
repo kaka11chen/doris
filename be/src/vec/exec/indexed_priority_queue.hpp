@@ -31,7 +31,7 @@ struct IndexedPriorityQueueEntry {
     long generation;
 
     IndexedPriorityQueueEntry(T val, long prio, long gen)
-            : value(val), priority(prio), generation(gen) {}
+            : value(std::move(val)), priority(prio), generation(gen) {}
 };
 
 enum class IndexedPriorityQueuePriorityOrdering { LOW_TO_HIGH, HIGH_TO_LOW };
@@ -65,7 +65,7 @@ public:
 
     IndexedPriorityQueue() = default;
 
-    bool add_or_update(const T& element, long priority) {
+    bool add_or_update(T element, long priority) {
         auto it = _index.find(element);
         if (it != _index.end()) {
             if (it->second.priority == priority) {
@@ -73,9 +73,9 @@ public:
             }
             _queue.erase(it->second);
         }
-        IndexedPriorityQueueEntry<T> entry {element, priority, generation++};
-        _queue.insert(entry);
-        _index.insert({element, entry});
+        IndexedPriorityQueueEntry<T> entry {std::move(element), priority, generation++};
+        _queue.insert(std::move(entry));
+        _index.insert({entry.value, std::move(entry)});
         return true;
     }
 

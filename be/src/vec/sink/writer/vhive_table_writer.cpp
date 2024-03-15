@@ -32,14 +32,6 @@ VHiveTableWriter::VHiveTableWriter(const TDataSink& t_sink,
                                    const VExprContextSPtrs& output_expr_ctxs)
         : AsyncResultWriter(output_expr_ctxs), _t_sink(t_sink) {
     DCHECK(_t_sink.__isset.hive_table_sink);
-    //    fprintf(stderr, "_t_sink->hive_table_sink.table_name: %s\n",
-    //            _t_sink.hive_table_sink.table_name.c_str());
-    //    fprintf(stderr, "_t_sink->hive_table_sink.location.write_path: %s\n",
-    //            _t_sink.hive_table_sink.location.write_path.c_str());
-    //    for (int i = 0; i < _t_sink.hive_table_sink.columns.size(); ++i) {
-    //        fprintf(stderr, "hive_table_sink.columns[%d].name: %s\n", i,
-    //                _t_sink.hive_table_sink.columns[i].name.c_str());
-    //    }
 }
 
 Status VHiveTableWriter::init_properties(ObjectPool* pool) {
@@ -52,7 +44,7 @@ Status VHiveTableWriter::open(RuntimeState* state, RuntimeProfile* profile) {
 
     for (int i = 0; i < _t_sink.hive_table_sink.columns.size(); ++i) {
         if (_t_sink.hive_table_sink.columns[i].column_type == THiveColumnType::PARTITION_KEY) {
-            _partition_columns_input_index.push_back(i);
+            _partition_columns_input_index.emplace_back(i);
         }
     }
     return Status::OK();
@@ -66,45 +58,60 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
     if (_partition_columns_input_index.empty()) {
         auto writer_iter = _partitions_to_writers.find("");
         if (writer_iter == _partitions_to_writers.end()) {
-            std::shared_ptr<VHivePartitionWriter> writer = _create_partition_writer(block, -1, 1);
-            _partitions_to_writers.insert({"", writer});
-            RETURN_IF_ERROR(writer->open(_state, _profile));
-            RETURN_IF_ERROR(writer->write(block));
-            return Status::OK();
-        } else {
-            const long TARGET_MAX_FILE_SIZE = 100L * 1024L * 1024L; // 100MB
-            std::shared_ptr<VHivePartitionWriter> writer;
-            if (writer_iter->second->written_len() > TARGET_MAX_FILE_SIZE) {
-                static_cast<void>(writer_iter->second->close(Status::OK()));
-                _partitions_to_writers.erase(writer_iter);
-                writer = _create_partition_writer(block, -1, 1);
+            try {
+                std::shared_ptr<VHivePartitionWriter> writer = _create_partition_writer(block, -1);
                 _partitions_to_writers.insert({"", writer});
                 RETURN_IF_ERROR(writer->open(_state, _profile));
                 RETURN_IF_ERROR(writer->write(block));
+            } catch (doris::Exception& e) {
+                return e.to_status();
+            }
+            return Status::OK();
+        } else {
+            std::shared_ptr<VHivePartitionWriter> writer;
+            if (writer_iter->second->written_len() > config::hive_sink_max_file_size) {
+                static_cast<void>(writer_iter->second->close(Status::OK()));
+                _partitions_to_writers.erase(writer_iter);
+                try {
+                    writer = _create_partition_writer(block, -1);
+                    _partitions_to_writers.insert({"", writer});
+                    RETURN_IF_ERROR(writer->open(_state, _profile));
+                    RETURN_IF_ERROR(writer->write(block));
+                } catch (doris::Exception& e) {
+                    return e.to_status();
+                }
             } else {
                 writer = writer_iter->second;
             }
-            RETURN_IF_ERROR(writer_iter->second->write(block));
+            RETURN_IF_ERROR(writer->write(block));
             return Status::OK();
         }
     }
 
     for (int i = 0; i < block.rows(); ++i) {
-        std::vector<std::string> partition_values = _create_partition_values(block, i);
+        std::vector<std::string> partition_values;
+        try {
+            partition_values = _create_partition_values(block, i);
+        } catch (doris::Exception& e) {
+            return e.to_status();
+        }
         std::string partition_name = VHiveUtils::make_partition_name(
                 hive_table_sink.columns, _partition_columns_input_index, partition_values);
-        //        fprintf(stderr, "partition_name: %s\n", partition_name.c_str());
 
         auto create_and_open_writer =
-                [&](const std::string& partition_name, int row_index,
+                [&](const std::string& partition_name, int position,
                     std::shared_ptr<VHivePartitionWriter>& writer_ptr) -> Status {
-            auto writer = _create_partition_writer(block, row_index, 1);
-            RETURN_IF_ERROR(writer->open(_state, _profile));
-            IColumn::Filter filter(block.rows(), 0);
-            filter[row_index] = 1;
-            writer_positions.insert({writer, std::move(filter)});
-            _partitions_to_writers.insert({partition_name, writer});
-            writer_ptr = writer;
+            try {
+                auto writer = _create_partition_writer(block, position);
+                RETURN_IF_ERROR(writer->open(_state, _profile));
+                IColumn::Filter filter(block.rows(), 0);
+                filter[position] = 1;
+                writer_positions.insert({writer, std::move(filter)});
+                _partitions_to_writers.insert({partition_name, writer});
+                writer_ptr = writer;
+            } catch (doris::Exception& e) {
+                return e.to_status();
+            }
             return Status::OK();
         };
 
@@ -113,9 +120,8 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
             std::shared_ptr<VHivePartitionWriter> writer;
             RETURN_IF_ERROR(create_and_open_writer(partition_name, i, writer));
         } else {
-            const long TARGET_MAX_FILE_SIZE = 100L * 1024L * 1024L; // 100MB
             std::shared_ptr<VHivePartitionWriter> writer;
-            if (writer_iter->second->written_len() > TARGET_MAX_FILE_SIZE) {
+            if (writer_iter->second->written_len() > config::hive_sink_max_file_size) {
                 static_cast<void>(writer_iter->second->close(Status::OK()));
                 writer_positions.erase(writer_iter->second);
                 _partitions_to_writers.erase(writer_iter);
@@ -140,25 +146,20 @@ Status VHiveTableWriter::write(vectorized::Block& block) {
     return Status::OK();
 }
 
-//Status VHiveTableWriter::close_idle_writers() {
-//
-//}
-
 Status VHiveTableWriter::close(Status status) {
-    if (status == Status::OK()) {
-        for (const auto& pair : _partitions_to_writers) {
-            if (pair.second->close(status) != Status::OK()) {
-                // log it.
-            }
+    for (const auto& pair : _partitions_to_writers) {
+        Status st = pair.second->close(status);
+        if (st != Status::OK()) {
+            LOG(WARNING) << fmt::format("Unsupported type for partition {}", st.to_string());
+            continue;
         }
-        _partitions_to_writers.clear();
-    } else {
     }
+    _partitions_to_writers.clear();
     return Status::OK();
 }
 
 std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer(
-        vectorized::Block& block, int position, int bucket_number) {
+        vectorized::Block& block, int position) {
     auto& hive_table_sink = _t_sink.hive_table_sink;
     std::vector<std::string> partition_values;
     std::string partition_name;
@@ -167,22 +168,18 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
         partition_name = VHiveUtils::make_partition_name(
                 hive_table_sink.columns, _partition_columns_input_index, partition_values);
     }
-    std::vector<THivePartition> partitions = hive_table_sink.partitions;
-    THiveLocationParams write_location = hive_table_sink.location;
+    const std::vector<THivePartition>& partitions = hive_table_sink.partitions;
+    const THiveLocationParams& write_location = hive_table_sink.location;
     const THivePartition* existing_partition = nullptr;
     bool existing_table = true;
-    fprintf(stderr, "partitions.size(): %ld\n", partitions.size());
     for (const auto& partition : partitions) {
-        for (const auto& partition_value : partition.values) {
-            fprintf(stderr, "partition_value: %s\n", partition_value.c_str());
-        }
         if (partition_values == partition.values) {
             existing_partition = &partition;
             break;
         }
     }
     TUpdateMode::type update_mode;
-    WriteInfo write_info;
+    VHivePartitionWriter::WriteInfo write_info;
     TFileFormatType::type file_format_type;
     THiveCompressionType::type write_compress_type;
     if (existing_partition == nullptr) { // new partition
@@ -194,45 +191,40 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
             } else { // a new partition in a new partitioned table
                 auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
                 auto target_path = fmt::format("{}/{}", write_location.target_path, partition_name);
-                write_info = {write_path, target_path, write_location.file_type};
-                //                if (write_info.write_path != write_info.target_path) {
-                //                    if (file_system.directory_exists(write_info.target_path)) {
-                //                        return Status::AlreadyExist("");
-                //                    }
-                //                }
+                write_info = {std::move(write_path), std::move(target_path),
+                              write_location.file_type};
             }
         } else { // a new partition in an existing partitioned table, or an existing unpartitioned table
             if (_partition_columns_input_index.empty()) { // an existing unpartitioned table
-                update_mode = !_overwrite ? TUpdateMode::APPEND : TUpdateMode::OVERWRITE;
+                update_mode =
+                        !hive_table_sink.overwrite ? TUpdateMode::APPEND : TUpdateMode::OVERWRITE;
                 write_info = {write_location.write_path, write_location.target_path,
                               write_location.file_type};
-                fprintf(stderr, "write_path: %s\n", write_info.write_path.c_str());
-                fprintf(stderr, "target_path: %s\n", write_info.target_path.c_str());
             } else { // a new partition in an existing partitioned table
                 update_mode = TUpdateMode::NEW;
                 auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
                 auto target_path = fmt::format("{}/{}", write_location.target_path, partition_name);
-                fprintf(stderr, "write_path: %s\n", write_path.c_str());
-                fprintf(stderr, "target_path: %s\n", target_path.c_str());
-                write_info = {write_path, target_path, write_location.file_type};
+                write_info = {std::move(write_path), std::move(target_path),
+                              write_location.file_type};
             }
             // need to get schema from existing table ?
         }
         file_format_type = hive_table_sink.file_format;
         write_compress_type = hive_table_sink.compression_type;
     } else { // existing partition
-        if (!_overwrite) {
+        if (!hive_table_sink.overwrite) {
             update_mode = TUpdateMode::APPEND;
             auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
             auto target_path = fmt::format("{}", existing_partition->location.target_path);
-            write_info = {write_path, target_path, existing_partition->location.file_type};
+            write_info = {std::move(write_path), std::move(target_path),
+                          existing_partition->location.file_type};
             file_format_type = existing_partition->file_format;
             write_compress_type = hive_table_sink.compression_type;
         } else {
             update_mode = TUpdateMode::OVERWRITE;
             auto write_path = fmt::format("{}/{}", write_location.write_path, partition_name);
             auto target_path = fmt::format("{}/{}", write_location.target_path, partition_name);
-            write_info = {write_path, target_path, write_location.file_type};
+            write_info = {std::move(write_path), std::move(target_path), write_location.file_type};
             file_format_type = hive_table_sink.file_format;
             write_compress_type = hive_table_sink.compression_type;
             // need to get schema from existing table ?
@@ -240,9 +232,9 @@ std::shared_ptr<VHivePartitionWriter> VHiveTableWriter::_create_partition_writer
     }
 
     return std::make_shared<VHivePartitionWriter>(
-            _t_sink, partition_name, update_mode, _vec_output_expr_ctxs, hive_table_sink.columns,
-            write_info,
-            fmt::format("{}{}", _compute_file_name(bucket_number),
+            _t_sink, std::move(partition_name), update_mode, _vec_output_expr_ctxs,
+            hive_table_sink.columns, std::move(write_info),
+            fmt::format("{}{}", _compute_file_name(),
                         _get_file_extension(file_format_type, write_compress_type)),
             file_format_type, write_compress_type, hive_table_sink.hadoop_config);
 }
@@ -251,14 +243,12 @@ std::vector<std::string> VHiveTableWriter::_create_partition_values(vectorized::
                                                                     int position) {
     std::vector<std::string> partition_values;
     for (int i = 0; i < _partition_columns_input_index.size(); ++i) {
-        // Assuming `toPartitionValue` function converts column to string
         int partition_column_idx = _partition_columns_input_index[i];
         vectorized::ColumnWithTypeAndName partition_column =
                 block.get_by_position(partition_column_idx);
         std::string value =
                 _to_partition_value(_vec_output_expr_ctxs[partition_column_idx]->root()->type(),
                                     partition_column, position);
-        fprintf(stderr, "value: %s\n", value.c_str());
 
         // Check if value contains only printable ASCII characters
         bool isValid = true;
@@ -276,9 +266,10 @@ std::vector<std::string> VHiveTableWriter::_create_partition_values(vectorized::
                 encoded << std::hex << std::setw(2) << std::setfill('0') << (int)c;
                 encoded << " ";
             }
-            throw std::invalid_argument(
+            throw doris::Exception(
+                    doris::ErrorCode::INTERNAL_ERROR,
                     "Hive partition keys can only contain printable ASCII characters (0x20 - "
-                    "0x7E). Invalid value: " +
+                    "0x7E). Invalid value: {}",
                     encoded.str());
         }
 
@@ -291,12 +282,10 @@ std::vector<std::string> VHiveTableWriter::_create_partition_values(vectorized::
 std::string VHiveTableWriter::_to_partition_value(const TypeDescriptor& type_desc,
                                                   const ColumnWithTypeAndName& partition_column,
                                                   int position) {
-    fprintf(stderr, "_to_partition_value(): type_desc %d\n", type_desc.type);
     ColumnPtr column;
     if (auto* nullable_column = check_and_get_column<ColumnNullable>(*partition_column.column)) {
         auto* __restrict null_map_data = nullable_column->get_null_map_data().data();
         if (null_map_data[position]) {
-            fprintf(stderr, "position %d is null\n", position);
             return "__HIVE_DEFAULT_PARTITION__";
         }
         column = nullable_column->get_nested_column_ptr();
@@ -331,11 +320,6 @@ std::string VHiveTableWriter::_to_partition_value(const TypeDescriptor& type_des
     case TYPE_VARCHAR:
     case TYPE_CHAR:
     case TYPE_STRING: {
-        fprintf(stderr, "TYPE_STRING\n");
-        //        vectorized::Field field =
-        //                vectorized::check_and_get_column<const ColumnString>(*column)->
-        //                operator[](position);
-        //        return field.get<std::string>();
         return std::string(item, size);
     }
     case TYPE_DATE: {
@@ -390,8 +374,8 @@ std::string VHiveTableWriter::_to_partition_value(const TypeDescriptor& type_des
         return value.to_string(type_desc.scale);
     }
     default: {
-        LOG(WARNING) << fmt::format("Unsupported type for partition {}", type_desc.debug_string());
-        return "";
+        throw doris::Exception(doris::ErrorCode::INTERNAL_ERROR,
+                               "Unsupported type for partition {}", type_desc.debug_string());
     }
     }
 }
@@ -440,11 +424,10 @@ std::string VHiveTableWriter::_get_file_extension(TFileFormatType::type file_for
     return fmt::format("{}{}", compress_name, file_format_name);
 }
 
-std::string VHiveTableWriter::_compute_file_name(int bucketNumber) {
+std::string VHiveTableWriter::_compute_file_name() {
     boost::uuids::uuid uuid = boost::uuids::random_generator()();
 
     std::string uuid_str = boost::uuids::to_string(uuid);
-    fprintf(stderr, "query_id: %s\n", print_id(_state->query_id()).c_str());
 
     return fmt::format("{}_{}", print_id(_state->query_id()), uuid_str);
 }

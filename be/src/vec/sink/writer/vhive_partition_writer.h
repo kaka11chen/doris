@@ -35,25 +35,22 @@ namespace vectorized {
 class Block;
 class VFileFormatTransformer;
 
-struct WriteInfo {
-    std::string write_path;
-    std::string target_path;
-    TFileType::type file_type;
-};
-
 class VHivePartitionWriter {
 public:
-    VHivePartitionWriter(const TDataSink& t_sink, const std::string& partition_name,
+    struct WriteInfo {
+        std::string write_path;
+        std::string target_path;
+        TFileType::type file_type;
+    };
+
+    VHivePartitionWriter(const TDataSink& t_sink, const std::string partition_name,
                          TUpdateMode::type update_mode, const VExprContextSPtrs& output_expr_ctxs,
                          const std::vector<THiveColumn>& columns, WriteInfo write_info,
-                         const std::string& file_name, TFileFormatType::type file_format_type,
+                         const std::string file_name, TFileFormatType::type file_format_type,
                          THiveCompressionType::type hive_compress_type,
-                         std::map<std::string, std::string>& hadoop_conf);
+                         const std::map<std::string, std::string>& hadoop_conf);
 
-    Status init_properties(ObjectPool* pool) {
-        _pool = pool;
-        return Status::OK();
-    }
+    Status init_properties(ObjectPool* pool) { return Status::OK(); }
 
     Status open(RuntimeState* state, RuntimeProfile* profile);
 
@@ -64,11 +61,11 @@ public:
     inline size_t written_len() { return _vfile_writer->written_len(); }
 
 private:
+    std::unique_ptr<orc::Type> _build_orc_type(const TypeDescriptor& type_descriptor);
+
     Status _projection_and_filter_block(doris::vectorized::Block& input_block,
                                         const vectorized::IColumn::Filter* filter,
                                         doris::vectorized::Block* output_block);
-
-    std::unique_ptr<orc::Type> _build_orc_type(TypeDescriptor type_descriptor);
 
     THivePartitionUpdate _build_partition_update();
 
@@ -92,15 +89,11 @@ private:
 
     // If the result file format is plain text, like CSV, this _file_writer is owned by this FileResultWriter.
     // If the result file format is Parquet, this _file_writer is owned by _parquet_writer.
-    std::unique_ptr<doris::io::FileWriter> _file_writer_impl;
-    // convert block to parquet/orc/csv fomrat
-    std::unique_ptr<VFileFormatTransformer> _vfile_writer;
-
-    ObjectPool* _pool;
+    std::unique_ptr<doris::io::FileWriter> _file_writer_impl = nullptr;
+    // convert block to parquet/orc/csv format
+    std::unique_ptr<VFileFormatTransformer> _vfile_writer = nullptr;
 
     RuntimeState* _state;
-
-    //    bool _is_active;
 };
 } // namespace vectorized
 } // namespace doris
