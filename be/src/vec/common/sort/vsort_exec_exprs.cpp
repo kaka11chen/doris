@@ -63,6 +63,7 @@ Status VSortExecExprs::init(const VExprContextSPtrs& lhs_ordering_expr_ctxs,
                             const VExprContextSPtrs& rhs_ordering_expr_ctxs) {
     _lhs_ordering_expr_ctxs = lhs_ordering_expr_ctxs;
     _rhs_ordering_expr_ctxs = rhs_ordering_expr_ctxs;
+    _materialize_tuple = false;
     return Status::OK();
 }
 

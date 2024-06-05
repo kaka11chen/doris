@@ -179,6 +179,8 @@ public:
                                      int batch_size, bool* eos) override;
     void reset() override;
 
+    MergeSorterState& state() { return *_state; }
+
 private:
     bool _reach_limit() {
         return _state->unsorted_block_->rows() > buffered_block_size_ ||

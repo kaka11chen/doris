@@ -168,6 +168,7 @@ Status ExecEnv::_init(const std::vector<StorePath>& store_paths,
     }
     std::unordered_map<std::string, std::unique_ptr<vectorized::SpillDataDir>> spill_store_map;
     for (const auto& spill_path : spill_store_paths) {
+        fprintf(stderr, "spill_path: %s\n", spill_path.path.c_str());
         spill_store_map.emplace(spill_path.path, std::make_unique<vectorized::SpillDataDir>(
                                                          spill_path.path, spill_path.capacity_bytes,
                                                          spill_path.storage_medium));

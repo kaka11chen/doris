@@ -140,7 +140,8 @@ public:
     static std::unique_ptr<MapType> of_required(int key_id, int value_id,
                                                 std::unique_ptr<Type> key_type,
                                                 std::unique_ptr<Type> value_type);
-
+    const NestedField& key_field() const { return *_key_field; }
+    const NestedField& value_field() const { return *_value_field; }
     Type* key_type() const;
     Type* value_type() const;
     int key_id() const;
@@ -196,6 +197,8 @@ public:
     virtual Type* field_type(const std::string& field_name) override;
 
     virtual const NestedField* field(int field_id) override;
+
+    const NestedField& element_field() const { return _element_field; }
 
 private:
     ListType(NestedField element_field) : _element_field(std::move(element_field)) {}

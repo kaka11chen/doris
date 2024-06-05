@@ -438,11 +438,11 @@ if ("${DORIS_JAVA_HOME}" STREQUAL "")
     set(DORIS_JAVA_HOME "$ENV{JAVA_HOME}")
 endif()
 
-include_directories(${DORIS_JAVA_HOME}/include)
+include_directories(/mnt/datadisk0/chenqi/jdk-17.0.8/include)
 if (NOT OS_MACOSX)
-    include_directories(${DORIS_JAVA_HOME}/include/linux)
+    include_directories(/mnt/datadisk0/chenqi/jdk-17.0.8/include/linux)
 else()
-    include_directories(${DORIS_JAVA_HOME}/include/darwin)
+    include_directories(/mnt/datadisk0/chenqi/jdk-17.0.8/include/darwin)
 endif()
 
 if (NOT OS_MACOSX)
@@ -693,22 +693,22 @@ else()
     message(STATUS "Link Flags: ${TEST_LINK_LIBS}")
 endif()
 
-if (ENABLE_PCH)
-    add_library(pch STATIC ${SRC_DIR}pch/pch.cc)
-    target_precompile_headers(
-        pch
-        PUBLIC
-            ${SRC_DIR}pch/pch.h
-    )
-    if (COMPILER_CLANG)
-        target_compile_options(pch PRIVATE -Xclang -fno-pch-timestamp)
-    endif()
-endif()
+#if (ENABLE_PCH)
+#    add_library(pch STATIC ${SRC_DIR}pch/pch.cc)
+#    target_precompile_headers(
+#        pch
+#        PUBLIC
+#            ${SRC_DIR}pch/pch.h
+#    )
+#    if (COMPILER_CLANG)
+#        target_compile_options(pch PRIVATE -Xclang -fno-pch-timestamp)
+#    endif()
+#endif()
 
 function(pch_reuse target)
-    if (ENABLE_PCH)
-        target_precompile_headers(${target} REUSE_FROM pch)
-    endif()
+#    if (ENABLE_PCH)
+#        target_precompile_headers(${target} REUSE_FROM pch)
+#    endif()
 endfunction(pch_reuse target)
 
 add_subdirectory(${SRC_DIR}/agent)

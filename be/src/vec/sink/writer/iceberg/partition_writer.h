@@ -15,35 +15,50 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/sink/viceberg_table_sink.h"
+#pragma once
 
 namespace doris {
-class TExpr;
+namespace io {
+class FileSystem;
+}
+
+class ObjectPool;
+class RuntimeState;
+class RuntimeProfile;
+
+namespace iceberg {
+class Schema;
+}
 
 namespace vectorized {
 
-VIcebergTableSink::VIcebergTableSink(ObjectPool* pool, const RowDescriptor& row_desc,
-                                     const std::vector<TExpr>& texprs)
-        : AsyncWriterSink<VIcebergTableWriter, VICEBERG_TABLE_SINK>(row_desc, texprs),
-          _pool(pool) {}
+class Block;
+class VFileFormatTransformer;
 
-VIcebergTableSink::~VIcebergTableSink() = default;
+class IPartitionWriter {
+public:
+    struct WriteInfo {
+        std::string write_path;
+        std::string original_write_path;
+        std::string target_path;
+        TFileType::type file_type;
+    };
 
-Status VIcebergTableSink::init(const TDataSink& t_sink) {
-    RETURN_IF_ERROR(AsyncWriterSink::init(t_sink));
-    RETURN_IF_ERROR(_writer->init_properties(_pool, _row_desc));
-    return Status::OK();
-}
+    IPartitionWriter() = default;
+    virtual ~IPartitionWriter() = default;
 
-Status VIcebergTableSink::close(RuntimeState* state, Status exec_status) {
-    SCOPED_TIMER(_exec_timer);
-    if (_closed) {
-        return _close_status;
-    }
-    RETURN_IF_ERROR(DataSink::close(state, exec_status));
-    _close_status = AsyncWriterSink::close(state, exec_status);
-    return _close_status;
-}
+    virtual Status open(RuntimeState* state, RuntimeProfile* profile, const RowDescriptor* row_desc,
+                        ObjectPool* pool) = 0;
 
+    virtual Status write(vectorized::Block& block) = 0;
+
+    virtual Status close(const Status& status) = 0;
+
+    virtual const std::string& file_name() const = 0;
+
+    virtual int file_name_index() const = 0;
+
+    virtual size_t written_len() = 0;
+};
 } // namespace vectorized
 } // namespace doris

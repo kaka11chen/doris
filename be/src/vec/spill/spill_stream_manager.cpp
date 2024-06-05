@@ -47,10 +47,12 @@ SpillStreamManager::SpillStreamManager(
         : _spill_store_map(std::move(spill_store_map)), _stop_background_threads_latch(1) {}
 
 Status SpillStreamManager::init() {
+    fprintf(stderr, "init spill stream manager\n");
     LOG(INFO) << "init spill stream manager";
     RETURN_IF_ERROR(_init_spill_store_map());
 
     for (const auto& [path, store] : _spill_store_map) {
+        fprintf(stderr, "path: %s\n", path.c_str());
         auto gc_dir_root_dir = fmt::format("{}/{}", path, SPILL_GC_DIR_PREFIX);
         bool exists = true;
         RETURN_IF_ERROR(io::global_local_filesystem()->exists(gc_dir_root_dir, &exists));
@@ -161,10 +163,12 @@ Status SpillStreamManager::register_spill_stream(RuntimeState* state, SpillStrea
                                                  std::string query_id, std::string operator_name,
                                                  int32_t node_id, int32_t batch_rows,
                                                  size_t batch_bytes, RuntimeProfile* profile) {
+    fprintf(stderr, "register_spill_stream\n");
     auto data_dirs = _get_stores_for_spill(TStorageMedium::type::SSD);
     if (data_dirs.empty()) {
         data_dirs = _get_stores_for_spill(TStorageMedium::type::HDD);
     }
+    fprintf(stderr, "data_dirs: %s\n", data_dirs[0]->_path.c_str());
     if (data_dirs.empty()) {
         return Status::Error<ErrorCode::NO_AVAILABLE_ROOT_PATH>(
                 "no available disk can be used for spill.");

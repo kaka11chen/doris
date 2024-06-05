@@ -157,6 +157,14 @@ private:
             if constexpr (std::is_same_v<CppType, StringRef>) {
                 min_value = StringRef(encoded_min);
                 max_value = StringRef(encoded_max);
+                fprintf(stderr, "min_value: %s\n", min_value.data);
+                fprintf(stderr, "max_value: %s\n", max_value.data);
+                std::string x("AAA");
+                std::string y("aaa");
+                fprintf(stderr, "x < y: %d\n", x < y);
+                StringRef x1("AAA", 3);
+                StringRef y1("aaa", 3);
+                fprintf(stderr, "x < y: %d\n", x1 < y1);
             } else {
                 return false;
             };
@@ -257,6 +265,17 @@ private:
                 ParquetInt96 datetime96_max =
                         *reinterpret_cast<const ParquetInt96*>(encoded_max.data());
                 int64_t micros_max = datetime96_max.to_timestamp_micros();
+
+                // From Trino: Parquet INT96 timestamp values were compared incorrectly
+                // for the purposes of producing statistics by older parquet writers,
+                // so PARQUET-1065 deprecated them. The result is that any writer that produced stats
+                // was producing unusable incorrect values, except the special case where min == max
+                // and an incorrect ordering would not be material to the result.
+                // PARQUET-1026 made binary stats available and valid in that special case.
+                if (micros_min != micros_max) {
+                    return false;
+                }
+
                 if constexpr (std::is_same_v<CppType, VecDateTimeValue> ||
                               std::is_same_v<CppType, DateV2Value<DateTimeV2ValueType>>) {
                     min_value.from_unixtime(micros_min / 1000000, ctz);
@@ -324,6 +343,9 @@ private:
         default:
             return false;
         }
+        LOG(INFO) << "col_name: " << col_schema->name << ", "
+                  << "min_value: " << min_value << ", "
+                  << "max_value: " << max_value << ".";
         return _filter_by_min_max(predicate.op, predicate_values, min_value, max_value);
     }
 

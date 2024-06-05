@@ -78,7 +78,9 @@ Status MergeSorterState::add_sorted_block(Block& block) {
 }
 
 Status MergeSorterState::build_merge_tree(const SortDescription& sort_description) {
+    fprintf(stderr, "build_merge_tree:: sorted_blocks_.size(): %ld\n", sorted_blocks_.size());
     for (auto& block : sorted_blocks_) {
+        fprintf(stderr, "build_merge_tree:: block.rows(): %ld, block.columns: %ld\n", block.rows(), block.columns());
         cursors_.emplace_back(block, sort_description);
     }
 
@@ -153,6 +155,8 @@ Status Sorter::merge_sort_read_for_spill(RuntimeState* state, doris::vectorized:
 Status Sorter::partial_sort(Block& src_block, Block& dest_block) {
     size_t num_cols = src_block.columns();
     if (_materialize_sort_exprs) {
+        fprintf(stderr, "_materialize_sort_exprs\n");
+        fprintf(stderr, "partial_sort. src_block->columns(): %ld, desc_block.columns(): %ld\n", src_block.columns(), dest_block.columns());
         auto output_tuple_expr_ctxs = _vsort_exec_exprs.sort_tuple_slot_expr_ctxs();
         std::vector<int> valid_column_ids(output_tuple_expr_ctxs.size());
         for (int i = 0; i < output_tuple_expr_ctxs.size(); ++i) {
@@ -178,11 +182,15 @@ Status Sorter::partial_sort(Block& src_block, Block& dest_block) {
         dest_block.swap(new_block);
     }
 
+    fprintf(stderr, "_vsort_exec_exprs.lhs_ordering_expr_ctxs().size(): %ld\n", _vsort_exec_exprs.lhs_ordering_expr_ctxs().size());
     _sort_description.resize(_vsort_exec_exprs.lhs_ordering_expr_ctxs().size());
     Block* result_block = _materialize_sort_exprs ? &dest_block : &src_block;
+    fprintf(stderr, "result_block->columns(): %ld\n", result_block->columns());
     for (int i = 0; i < _sort_description.size(); i++) {
         const auto& ordering_expr = _vsort_exec_exprs.lhs_ordering_expr_ctxs()[i];
+        fprintf(stderr, "before ordering_expr->execute(result_block, &_sort_description[i].column_number)\n");
         RETURN_IF_ERROR(ordering_expr->execute(result_block, &_sort_description[i].column_number));
+        fprintf(stderr, "after ordering_expr->execute(result_block, &_sort_description[i].column_number)\n");
 
         _sort_description[i].direction = _is_asc_order[i] ? 1 : -1;
         _sort_description[i].nulls_direction =
@@ -210,12 +218,15 @@ FullSorter::FullSorter(VSortExecExprs& vsort_exec_exprs, int limit, int64_t offs
           _state(MergeSorterState::create_unique(row_desc, offset, limit, state, profile)) {}
 
 Status FullSorter::append_block(Block* block) {
+    fprintf(stderr, "append_block print_use_count: %s\n", block->print_use_count().c_str());
     DCHECK(block->rows() > 0);
     {
         SCOPED_TIMER(_merge_block_timer);
+        fprintf(stderr, "block.rows(): %ld, columns(): %ld\n", block->rows(), block->columns());
         auto& data = _state->unsorted_block_->get_columns_with_type_and_name();
         const auto& arrival_data = block->get_columns_with_type_and_name();
         auto sz = block->rows();
+        fprintf(stderr, "data.size(): %ld\n", data.size());
         for (int i = 0; i < data.size(); ++i) {
             DCHECK(data[i].type->equals(*(arrival_data[i].type)))
                     << " type1: " << data[i].type->get_name()
@@ -226,9 +237,9 @@ Status FullSorter::append_block(Block* block) {
         }
         block->clear_column_data();
     }
-    if (_reach_limit()) {
+//    if (_reach_limit()) {
         RETURN_IF_ERROR(_do_sort());
-    }
+//    }
     return Status::OK();
 }
 
@@ -249,12 +260,15 @@ Status FullSorter::merge_sort_read_for_spill(RuntimeState* state, doris::vectori
 }
 
 Status FullSorter::_do_sort() {
+    fprintf(stderr, "_do_sort\n");
     Block* src_block = _state->unsorted_block_.get();
     Block desc_block = src_block->clone_without_columns();
+    fprintf(stderr, "_do_sort. src_block->columns(): %ld, desc_block.columns(): %ld\n", src_block->columns(), desc_block.columns());
     RETURN_IF_ERROR(partial_sort(*src_block, desc_block));
 
     // dispose TOP-N logic
     if (_limit != -1 && !_enable_spill) {
+        fprintf(stderr, "_limit != -1 && !_enable_spill");
         // Here is a little opt to reduce the mem usage, we build a max heap
         // to order the block in _block_priority_queue.
         // if one block totally greater the heap top of _block_priority_queue
@@ -275,6 +289,7 @@ Status FullSorter::_do_sort() {
         }
     } else {
         // dispose normal sort logic
+        fprintf(stderr, "_state->add_sorted_block\n");
         static_cast<void>(_state->add_sorted_block(desc_block));
     }
     return Status::OK();

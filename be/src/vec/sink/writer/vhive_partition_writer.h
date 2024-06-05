@@ -48,21 +48,21 @@ public:
         TFileType::type file_type;
     };
 
-    VHivePartitionWriter(const TDataSink& t_sink, std::string partition_name,
-                         TUpdateMode::type update_mode, const VExprContextSPtrs& output_expr_ctxs,
-                         const VExprContextSPtrs& write_output_expr_ctxs,
-                         const std::set<size_t>& non_write_columns_indices,
-                         const std::vector<THiveColumn>& columns, WriteInfo write_info,
-                         std::string file_name, int file_name_index,
-                         TFileFormatType::type file_format_type,
-                         TFileCompressType::type hive_compress_type,
-                         const std::map<std::string, std::string>& hadoop_conf);
+    VHivePartitionWriter(
+            const TDataSink& t_sink, std::string partition_name, TUpdateMode::type update_mode,
+            //        const VExprContextSPtrs& output_expr_ctxs,
+            const VExprContextSPtrs& write_output_expr_ctxs,
+            //        const std::set<size_t>& non_write_columns_indices, const std::vector<THiveColumn>& columns,
+            std::vector<std::string> write_column_names, WriteInfo write_info,
+            std::string file_name, int file_name_index, TFileFormatType::type file_format_type,
+            TFileCompressType::type hive_compress_type,
+            const std::map<std::string, std::string>& hadoop_conf);
 
     Status init_properties(ObjectPool* pool) { return Status::OK(); }
 
     Status open(RuntimeState* state, RuntimeProfile* profile);
 
-    Status write(vectorized::Block& block, IColumn::Filter* filter = nullptr);
+    Status write(vectorized::Block& block);
 
     Status close(const Status& status);
 
@@ -76,9 +76,10 @@ private:
     std::string _get_target_file_name();
 
 private:
-    Status _projection_and_filter_block(doris::vectorized::Block& input_block,
-                                        const vectorized::IColumn::Filter* filter,
-                                        doris::vectorized::Block* output_block);
+    Status _open_internal(RuntimeState* state, RuntimeProfile* profile);
+
+    Status _filter_block(doris::vectorized::Block& block, const vectorized::IColumn::Filter* filter,
+                         doris::vectorized::Block* output_block);
 
     THivePartitionUpdate _build_partition_update();
 
@@ -94,11 +95,12 @@ private:
     size_t _row_count = 0;
     size_t _input_size_in_bytes = 0;
 
-    const VExprContextSPtrs& _vec_output_expr_ctxs;
+    //    const VExprContextSPtrs& _vec_output_expr_ctxs;
     const VExprContextSPtrs& _write_output_expr_ctxs;
-    const std::set<size_t>& _non_write_columns_indices;
+    //    const std::set<size_t>& _non_write_columns_indices;
 
-    const std::vector<THiveColumn>& _columns;
+    //    const std::vector<THiveColumn>& _columns;
+    std::vector<std::string> _write_column_names;
     WriteInfo _write_info;
     std::string _file_name;
     int _file_name_index;
@@ -115,6 +117,8 @@ private:
     std::unique_ptr<VFileFormatTransformer> _file_format_transformer = nullptr;
 
     RuntimeState* _state;
+
+    std::atomic<bool> _opened = false;
 };
 } // namespace vectorized
 } // namespace doris

@@ -657,15 +657,18 @@ Status IcebergOrcReader::_read_position_delete_file(const TFileRangeDesc* delete
  * 2. col1 -> col1_new
  */
 Status IcebergParquetReader::_gen_col_name_maps(std::vector<tparquet::KeyValue> parquet_meta_kv) {
+    fprintf(stderr, "_gen_col_name_maps\n");
     for (int i = 0; i < parquet_meta_kv.size(); ++i) {
         tparquet::KeyValue kv = parquet_meta_kv[i];
         if (kv.key == "iceberg.schema") {
+            fprintf(stderr, "_has_iceberg_schema\n");
             _has_iceberg_schema = true;
             std::string schema = kv.value;
             rapidjson::Document json;
             json.Parse(schema.c_str());
 
             if (json.HasMember("fields")) {
+                fprintf(stderr, "_has_iceberg_schema_fields\n");
                 rapidjson::Value& fields = json["fields"];
                 if (fields.IsArray()) {
                     for (int j = 0; j < fields.Size(); j++) {

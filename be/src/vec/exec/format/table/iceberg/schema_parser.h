@@ -20,6 +20,7 @@
 #include <rapidjson/document.h>
 
 #include <memory>
+#include <unordered_set>
 
 namespace doris {
 namespace iceberg {

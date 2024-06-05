@@ -156,6 +156,7 @@ struct MergeSortCursorImpl {
             size_t column_number = !column_desc.column_name.empty()
                                            ? block.get_position_by_name(column_desc.column_name)
                                            : column_desc.column_number;
+            fprintf(stderr, "column_number: %ld\n", column_number);
             sort_columns.push_back(columns[column_number].get());
         }
 

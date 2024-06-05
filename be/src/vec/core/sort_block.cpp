@@ -48,6 +48,7 @@ void sort_block(Block& src_block, Block& dest_block, const SortDescription& desc
         return;
     }
 
+    fprintf(stderr, "sort_block\n");
     /// If only one column to sort by
     if (description.size() == 1) {
         bool reverse = description[0].direction == -1;

@@ -264,6 +264,7 @@ void CsvReader::_init_file_description() {
 }
 
 Status CsvReader::init_reader(bool is_load) {
+    fprintf(stderr, "init_reader\n");
     // set the skip lines and start offset
     int64_t start_offset = _range.start_offset;
     if (start_offset == 0) {

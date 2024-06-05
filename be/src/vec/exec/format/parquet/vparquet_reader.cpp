@@ -856,6 +856,20 @@ Status ParquetReader::_process_column_stat_filter(const std::vector<tparquet::Co
                 (statistic.__isset.null_count && statistic.null_count == meta_data.num_values);
         bool is_set_min_max = (statistic.__isset.max && statistic.__isset.min) ||
                               (statistic.__isset.max_value && statistic.__isset.min_value);
+        LOG(INFO) << "col_name: " << col_name << ", "
+                  << "statistic.__isset.null_count: " << statistic.__isset.null_count << ", "
+                  << "statistic.null_count: " << statistic.null_count << ", "
+                  << "meta_data.num_values: " << meta_data.num_values << ", "
+                  << "statistic.null_count: " << statistic.null_count << ", "
+                  << "statistic.__isset.max: " << statistic.__isset.max << ", "
+                  << "statistic.__isset.min: " << statistic.__isset.min << ", "
+                  << "statistic.__isset.max_value: " << statistic.__isset.max_value << ", "
+                  << "statistic.__isset.min_value: " << statistic.__isset.min_value << ", "
+                  << "statistic.min_value: " << statistic.min_value << ", "
+                  << "statistic.max_value: " << statistic.max_value << ", "
+                  << "statistic.min: " << statistic.min << ", "
+                  << "statistic.max: " << statistic.max << ".";
+
         if ((!is_set_min_max) && (!is_all_null)) {
             continue;
         }

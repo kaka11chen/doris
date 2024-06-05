@@ -94,10 +94,11 @@ std::unique_ptr<StructType> SchemaParser::_struct_from_json(const rapidjson::Val
         }
 
         bool is_required = field[REQUIRED].GetBool();
+        fprintf(stderr, "id: %d, name: %s, is_required: %d\n", id, name.c_str(), is_required);
 
         fields.emplace_back(!is_required, id, name, std::move(type), doc);
     }
-
+    fprintf(stderr, "fields.size(): %ld\n", fields.size());
     return std::make_unique<StructType>(std::move(fields));
 }
 
@@ -138,6 +139,8 @@ std::unique_ptr<Schema> SchemaParser::from_json(const std::string& json) {
                                std::string(GetParseError_En(doc.GetParseError())));
     }
     std::unique_ptr<Type> type = _type_from_json(doc);
+    fprintf(stderr, "type->as_struct_type()->fields().size(): %ld\n",
+            type->as_struct_type()->fields().size());
     return std::make_unique<Schema>(type->as_nested_type()->as_struct_type()->move_fields());
 }
 

@@ -20,6 +20,7 @@
 #include <gen_cpp/DataSinks_types.h>
 
 #include "util/runtime_profile.h"
+#include "vec/columns/column.h"
 #include "vec/exprs/vexpr_fwd.h"
 #include "vec/sink/writer/async_result_writer.h"
 
@@ -51,6 +52,8 @@ public:
     Status close(Status) override;
 
 private:
+    Status _open_internal(RuntimeState* state, RuntimeProfile* profile);
+
     std::shared_ptr<VHivePartitionWriter> _create_partition_writer(
             vectorized::Block& block, int position, const std::string* file_name = nullptr,
             int file_name_index = 0);
@@ -61,6 +64,9 @@ private:
                                     const ColumnWithTypeAndName& partition_column, int position);
 
     std::string _compute_file_name();
+
+    Status _filter_block(doris::vectorized::Block& block, const vectorized::IColumn::Filter* filter,
+                         doris::vectorized::Block* output_block);
 
     // Currently it is a copy, maybe it is better to use move semantics to eliminate it.
     TDataSink _t_sink;
@@ -73,6 +79,8 @@ private:
     VExprContextSPtrs _write_output_vexpr_ctxs;
 
     size_t _row_count = 0;
+
+    std::atomic<bool> _opened = false;
 
     // profile counters
     int64_t _send_data_ns = 0;

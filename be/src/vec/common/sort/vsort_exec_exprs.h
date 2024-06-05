@@ -71,6 +71,12 @@ public:
 
     Status clone(RuntimeState* state, VSortExecExprs& new_exprs);
 
+    // Initialize directly from already-created VExprContexts. Callers should manually call
+    // Prepare(), Open(), and Close() on input VExprContexts (instead of calling the
+    // analogous functions in this class). Used for testing.
+    Status init(const VExprContextSPtrs& lhs_ordering_expr_ctxs,
+                const VExprContextSPtrs& rhs_ordering_expr_ctxs);
+
 private:
     // Create two VExprContexts for evaluating over the TupleRows.
     VExprContextSPtrs _lhs_ordering_expr_ctxs;
@@ -89,11 +95,11 @@ private:
     // this flag list would be used to convert column to nullable.
     std::vector<bool> _need_convert_to_nullable_flags;
 
-    // Initialize directly from already-created VExprContexts. Callers should manually call
-    // Prepare(), Open(), and Close() on input VExprContexts (instead of calling the
-    // analogous functions in this class). Used for testing.
-    Status init(const VExprContextSPtrs& lhs_ordering_expr_ctxs,
-                const VExprContextSPtrs& rhs_ordering_expr_ctxs);
+    //    // Initialize directly from already-created VExprContexts. Callers should manually call
+    //    // Prepare(), Open(), and Close() on input VExprContexts (instead of calling the
+    //    // analogous functions in this class). Used for testing.
+    //    Status init(const VExprContextSPtrs& lhs_ordering_expr_ctxs,
+    //                const VExprContextSPtrs& rhs_ordering_expr_ctxs);
 
     // Initialize the ordering and (optionally) materialization expressions from the thrift
     // TExprs into the specified pool. sort_tuple_slot_exprs is NULL if the tuple is not

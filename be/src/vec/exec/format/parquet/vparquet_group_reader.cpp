@@ -180,6 +180,7 @@ Status RowGroupReader::init(
 
 bool RowGroupReader::_can_filter_by_dict(int slot_id,
                                          const tparquet::ColumnMetaData& column_metadata) {
+    //    return false;
     SlotDescriptor* slot = nullptr;
     const std::vector<SlotDescriptor*>& slots = _tuple_descriptor->slots();
     for (auto each : slots) {
@@ -189,9 +190,11 @@ bool RowGroupReader::_can_filter_by_dict(int slot_id,
         }
     }
     if (!slot->type().is_string_type()) {
+        fprintf(stderr, "!slot->type().is_string_type()\n");
         return false;
     }
     if (column_metadata.type != tparquet::Type::BYTE_ARRAY) {
+        fprintf(stderr, "column_metadata.type != tparquet::Type::BYTE_ARRAY\n");
         return false;
     }
 
@@ -200,23 +203,23 @@ bool RowGroupReader::_can_filter_by_dict(int slot_id,
     }
 
     if (!is_dictionary_encoded(column_metadata)) {
+        fprintf(stderr, "!is_dictionary_encoded(column_metadata)\n");
         return false;
     }
 
-    // TODO：check expr like 'a > 10 is null', 'a > 10' should can be filter by dict.
     std::function<bool(const VExpr* expr)> visit_function_call = [&](const VExpr* expr) {
+        // TODO: The current implementation of dictionary filtering does not take into account
+        //  the implementation of NULL values because the dictionary itself does not contain
+        //  NULL value encoding. As a result, many NULL-related functions or expressions
+        //  cannot work properly, such as is null, is not null, coalesce, etc.
+        //  Here we first disable dictionary filtering when predicate contains functions.
+        //  Implementation of NULL value dictionary filtering will be carried out later.
         if (expr->node_type() == TExprNodeType::FUNCTION_CALL) {
-            std::string is_null_str;
-            std::string function_name = expr->fn().name.function_name;
-            if (function_name.compare("is_null_pred") == 0 ||
-                function_name.compare("is_not_null_pred") == 0) {
+            return false;
+        }
+        for (auto& child : expr->children()) {
+            if (!visit_function_call(child.get())) {
                 return false;
-            }
-        } else {
-            for (auto& child : expr->children()) {
-                if (!visit_function_call(child.get())) {
-                    return false;
-                }
             }
         }
         return true;
