@@ -19,6 +19,7 @@ package org.apache.doris.common;
 
 import com.github.benmanes.caffeine.cache.AsyncCacheLoader;
 import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
+import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.CacheLoader;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
@@ -66,6 +67,12 @@ public class CacheFactory {
         this.maxSize = maxSize;
         this.enableStats = enableStats;
         this.ticker = ticker;
+    }
+
+    // Build a loading cache, without executor, it will use fork-join pool for refresh
+    public <K, V> Cache<K, V> buildCache() {
+        Caffeine<Object, Object> builder = buildWithParams();
+        return builder.build();
     }
 
     // Build a loading cache, without executor, it will use fork-join pool for refresh

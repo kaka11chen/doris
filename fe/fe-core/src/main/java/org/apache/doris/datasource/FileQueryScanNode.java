@@ -103,18 +103,22 @@ public abstract class FileQueryScanNode extends FileScanNode {
     public FileQueryScanNode(PlanNodeId id, TupleDescriptor desc, String planNodeName,
                              StatisticalType statisticalType, boolean needCheckColumnPriv) {
         super(id, desc, planNodeName, statisticalType, needCheckColumnPriv);
+        if (ConnectContext.get().getExecutor() != null) {
+            ConnectContext.get().getExecutor().getSummaryProfile().createNodeTimer(id.toString());
+        }
     }
 
     @Override
     public void init(Analyzer analyzer) throws UserException {
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeStartTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeStartTime(id.toString());
         }
         super.init(analyzer);
         initFileSplitSize();
         doInitialize();
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeFinishTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeFinishTime(id.toString());
+            ConnectContext.get().getExecutor().getSummaryProfile().processNode(id.toString());
         }
     }
 
@@ -125,11 +129,13 @@ public abstract class FileQueryScanNode extends FileScanNode {
     public void init() throws UserException {
         super.init();
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeStartTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeStartTime(id.toString());
         }
         doInitialize();
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeFinishTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setInitScanNodeFinishTime(id.toString());
+            ConnectContext.get().getExecutor().getSummaryProfile().processNode(id.toString());
+
         }
     }
 
@@ -210,13 +216,13 @@ public abstract class FileQueryScanNode extends FileScanNode {
     // Create scan range locations and the statistics.
     protected void doFinalize() throws UserException {
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setFinalizeScanNodeStartTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setFinalizeScanNodeStartTime(id.toString());
         }
         convertPredicate();
         createScanRangeLocations();
         updateRequiredSlots();
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setFinalizeScanNodeFinishTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setFinalizeScanNodeFinishTime(id.toString());
         }
     }
 
@@ -265,8 +271,9 @@ public abstract class FileQueryScanNode extends FileScanNode {
     public void createScanRangeLocations() throws UserException {
         long start = System.currentTimeMillis();
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setGetSplitsStartTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setGetSplitsStartTime(id.toString());
         }
+
         TFileFormatType fileFormatType = getFileFormatType();
         if (fileFormatType == TFileFormatType.FORMAT_ORC) {
             genSlotToSchemaIdMapForOrc();
@@ -315,7 +322,7 @@ public abstract class FileQueryScanNode extends FileScanNode {
                     backendPolicy, this, this::splitToScanRange, locationProperties, pathPartitionKeys);
             splitAssignment.init();
             if (ConnectContext.get().getExecutor() != null) {
-                ConnectContext.get().getExecutor().getSummaryProfile().setGetSplitsFinishTime();
+                ConnectContext.get().getExecutor().getSummaryProfile().setGetSplitsFinishTime(id.toString());
             }
             if (splitAssignment.getSampleSplit() == null && !isFileStreamType()) {
                 return;
@@ -350,8 +357,9 @@ public abstract class FileQueryScanNode extends FileScanNode {
         } else {
             List<Split> inputSplits = getSplits();
             if (ConnectContext.get().getExecutor() != null) {
-                ConnectContext.get().getExecutor().getSummaryProfile().setGetSplitsFinishTime();
+                ConnectContext.get().getExecutor().getSummaryProfile().setGetSplitsFinishTime(getId().toString());
             }
+
             selectedSplitNum = inputSplits.size();
             if (inputSplits.isEmpty() && !isFileStreamType()) {
                 return;
@@ -367,10 +375,10 @@ public abstract class FileQueryScanNode extends FileScanNode {
         }
 
         if (ConnectContext.get().getExecutor() != null) {
-            ConnectContext.get().getExecutor().getSummaryProfile().setCreateScanRangeFinishTime();
+            ConnectContext.get().getExecutor().getSummaryProfile().setCreateScanRangeFinishTime(getId().toString());
         }
         if (LOG.isDebugEnabled()) {
-            LOG.debug("create #{} ScanRangeLocations cost: {} ms",
+            LOG.info("create #{} ScanRangeLocations cost: {} ms",
                     scanRangeLocations.size(), (System.currentTimeMillis() - start));
         }
     }

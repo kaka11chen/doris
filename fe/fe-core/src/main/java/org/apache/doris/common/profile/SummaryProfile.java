@@ -29,8 +29,11 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.gson.Gson;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LongSummaryStatistics;
 import java.util.Map;
 
 /**
@@ -206,15 +209,15 @@ public class SummaryProfile {
     private long queryCreateSingleNodeFinishTime = -1;
     // Create distribute plan end time
     private long queryDistributedFinishTime = -1;
-    private long initScanNodeStartTime = -1;
-    private long initScanNodeFinishTime = -1;
-    private long finalizeScanNodeStartTime = -1;
-    private long finalizeScanNodeFinishTime = -1;
-    private long getSplitsStartTime = -1;
-    private long getPartitionsFinishTime = -1;
-    private long getPartitionFilesFinishTime = -1;
-    private long getSplitsFinishTime = -1;
-    private long createScanRangeFinishTime = -1;
+    // private long initScanNodeStartTime = -1;
+    // private long initScanNodeFinishTime = -1;
+    // private long finalizeScanNodeStartTime = -1;
+    // private long finalizeScanNodeFinishTime = -1;
+    // private long getSplitsStartTime = -1;
+    // private long getPartitionsFinishTime = -1;
+    // private long getPartitionFilesFinishTime = -1;
+    // private long getSplitsFinishTime = -1;
+    // private long createScanRangeFinishTime = -1;
     // Plan end time
     private long queryPlanFinishTime = -1;
     private long assignFragmentTime = -1;
@@ -247,6 +250,84 @@ public class SummaryProfile {
     // to FE)
     private Map<TNetworkAddress, List<Long>> rpcPhase1Latency;
     private Map<TNetworkAddress, List<Long>> rpcPhase2Latency;
+
+    private final Map<String, LongSummaryStatistics> totalStats = new HashMap<>();
+
+    private static class NestedStepTimer {
+        private static class StepInfo {
+            private final String name;
+            private final long startTime;
+            private final StepInfo parent;
+            private final Map<String, LongSummaryStatistics> statistics = new HashMap<>();
+            private final List<StepInfo> children = new ArrayList<>();
+
+            StepInfo(String name, long startTime, StepInfo parent) {
+                this.name = name;
+                this.startTime = startTime;
+                this.parent = parent;
+            }
+        }
+
+        private StepInfo currentStep;
+        private final Map<String, LongSummaryStatistics> totalStats = new HashMap<>();
+
+        public void startStep(String step) {
+            long now = System.currentTimeMillis();
+            StepInfo newStep = new StepInfo(step, now, currentStep);
+            if (currentStep != null) {
+                currentStep.children.add(newStep);
+            }
+            currentStep = newStep;
+        }
+
+        public void stopStep(String step) {
+            if (currentStep == null || !currentStep.name.equals(step)) {
+                throw new IllegalStateException("Attempting to stop step '" + step
+                        + "' but current step is " + (currentStep == null ? "null" : "'" + currentStep.name + "'"));
+            }
+
+            long duration = System.currentTimeMillis() - currentStep.startTime;
+
+            updateStats(currentStep.statistics, currentStep.name, duration);
+            updateStats(totalStats, currentStep.name, duration);
+
+            currentStep = currentStep.parent;
+        }
+
+        private void updateStats(Map<String, LongSummaryStatistics> stats, String step, long duration) {
+            stats.computeIfAbsent(step, k -> new LongSummaryStatistics()).accept(duration);
+        }
+
+        public Map<String, LongSummaryStatistics> getStats() {
+            return Collections.unmodifiableMap(totalStats);
+        }
+    }
+
+    private final Map<String, NestedStepTimer> nodeTimers = new HashMap<>();
+
+    public NestedStepTimer createNodeTimer(String nodeId) {
+        NestedStepTimer timer = new NestedStepTimer();
+        nodeTimers.put(nodeId, timer);
+        return timer;
+    }
+
+    public NestedStepTimer getNodeTimer(String nodeId) {
+        return nodeTimers.get(nodeId);
+    }
+
+    private void mergeNodeStats(Map<String, LongSummaryStatistics> nodeStats) {
+        nodeStats.forEach((step, stats) -> {
+            totalStats.computeIfAbsent(step, k -> new LongSummaryStatistics())
+                    .combine(stats);
+        });
+    }
+
+    public void processNode(String nodeId) {
+        NestedStepTimer nodeTimer = nodeTimers.get(nodeId);
+        if (nodeTimer != null) {
+            mergeNodeStats(nodeTimer.getStats());
+        }
+    }
 
     public SummaryProfile() {
         summaryProfile = new RuntimeProfile(SUMMARY_PROFILE_NAME);
@@ -321,18 +402,60 @@ public class SummaryProfile {
                 getPrettyTime(queryCreateSingleNodeFinishTime, queryJoinReorderFinishTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(QUERY_DISTRIBUTED_TIME,
                 getPrettyTime(queryDistributedFinishTime, queryCreateSingleNodeFinishTime, TUnit.TIME_MS));
+        // executionSummaryProfile.addInfoString(INIT_SCAN_NODE_TIME,
+        //         getPrettyTime(initScanNodeFinishTime, initScanNodeStartTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(INIT_SCAN_NODE_TIME,
-                getPrettyTime(initScanNodeFinishTime, initScanNodeStartTime, TUnit.TIME_MS));
+                getPrettyTime(totalStats.get(INIT_SCAN_NODE_TIME).getSum(),
+                        totalStats.get(INIT_SCAN_NODE_TIME).getCount(),
+                        totalStats.get(INIT_SCAN_NODE_TIME).getAverage(),
+                        totalStats.get(INIT_SCAN_NODE_TIME).getMax(),
+                        totalStats.get(INIT_SCAN_NODE_TIME).getMin(),
+                        TUnit.TIME_MS));
+        // executionSummaryProfile.addInfoString(FINALIZE_SCAN_NODE_TIME,
+        //         getPrettyTime(finalizeScanNodeFinishTime, finalizeScanNodeStartTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(FINALIZE_SCAN_NODE_TIME,
-                getPrettyTime(finalizeScanNodeFinishTime, finalizeScanNodeStartTime, TUnit.TIME_MS));
+                getPrettyTime(totalStats.get(FINALIZE_SCAN_NODE_TIME).getSum(),
+                        totalStats.get(FINALIZE_SCAN_NODE_TIME).getCount(),
+                        totalStats.get(FINALIZE_SCAN_NODE_TIME).getAverage(),
+                        totalStats.get(FINALIZE_SCAN_NODE_TIME).getMax(),
+                        totalStats.get(FINALIZE_SCAN_NODE_TIME).getMin(),
+                        TUnit.TIME_MS));
+        // executionSummaryProfile.addInfoString(GET_SPLITS_TIME,
+        //         getPrettyTime(getSplitsFinishTime, getSplitsStartTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(GET_SPLITS_TIME,
-                getPrettyTime(getSplitsFinishTime, getSplitsStartTime, TUnit.TIME_MS));
+                getPrettyTime(totalStats.get(GET_SPLITS_TIME).getSum(),
+                        totalStats.get(GET_SPLITS_TIME).getCount(),
+                        totalStats.get(GET_SPLITS_TIME).getAverage(),
+                        totalStats.get(GET_SPLITS_TIME).getMax(),
+                        totalStats.get(GET_SPLITS_TIME).getMin(),
+                        TUnit.TIME_MS));
+        // executionSummaryProfile.addInfoString(GET_PARTITIONS_TIME,
+        //         getPrettyTime(getPartitionsFinishTime, getSplitsStartTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(GET_PARTITIONS_TIME,
-                getPrettyTime(getPartitionsFinishTime, getSplitsStartTime, TUnit.TIME_MS));
+                getPrettyTime(totalStats.get(GET_PARTITIONS_TIME).getSum(),
+                        totalStats.get(GET_PARTITIONS_TIME).getCount(),
+                        totalStats.get(GET_PARTITIONS_TIME).getAverage(),
+                        totalStats.get(GET_PARTITIONS_TIME).getMax(),
+                        totalStats.get(GET_PARTITIONS_TIME).getMin(),
+                        TUnit.TIME_MS));
+        // executionSummaryProfile.addInfoString(GET_PARTITION_FILES_TIME,
+        //         getPrettyTime(getPartitionFilesFinishTime, getPartitionsFinishTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(GET_PARTITION_FILES_TIME,
-                getPrettyTime(getPartitionFilesFinishTime, getPartitionsFinishTime, TUnit.TIME_MS));
+                getPrettyTime(totalStats.get(GET_PARTITION_FILES_TIME).getSum(),
+                        totalStats.get(GET_PARTITION_FILES_TIME).getCount(),
+                        totalStats.get(GET_PARTITION_FILES_TIME).getAverage(),
+                        totalStats.get(GET_PARTITION_FILES_TIME).getMax(),
+                        totalStats.get(GET_PARTITION_FILES_TIME).getMin(),
+                        TUnit.TIME_MS));
+        // executionSummaryProfile.addInfoString(CREATE_SCAN_RANGE_TIME,
+        //         getPrettyTime(createScanRangeFinishTime, getSplitsFinishTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(CREATE_SCAN_RANGE_TIME,
-                getPrettyTime(createScanRangeFinishTime, getSplitsFinishTime, TUnit.TIME_MS));
+                getPrettyTime(totalStats.get(CREATE_SCAN_RANGE_TIME).getSum(),
+                        totalStats.get(CREATE_SCAN_RANGE_TIME).getCount(),
+                        totalStats.get(CREATE_SCAN_RANGE_TIME).getAverage(),
+                        totalStats.get(CREATE_SCAN_RANGE_TIME).getMax(),
+                        totalStats.get(CREATE_SCAN_RANGE_TIME).getMin(),
+                        TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(SCHEDULE_TIME,
                 getPrettyTime(queryScheduleFinishTime, queryPlanFinishTime, TUnit.TIME_MS));
         executionSummaryProfile.addInfoString(SCHEDULE_TIME_PER_BE, getRpcLatency());
@@ -423,40 +546,56 @@ public class SummaryProfile {
         this.queryCreateSingleNodeFinishTime = TimeUtils.getStartTimeMs();
     }
 
-    public void setInitScanNodeStartTime() {
-        this.initScanNodeStartTime = TimeUtils.getStartTimeMs();
+    public void setInitScanNodeStartTime(String id) {
+        // this.initScanNodeStartTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).startStep(INIT_SCAN_NODE_TIME);
     }
 
-    public void setInitScanNodeFinishTime() {
-        this.initScanNodeFinishTime = TimeUtils.getStartTimeMs();
+    public void setInitScanNodeFinishTime(String id) {
+        // this.initScanNodeFinishTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).stopStep(INIT_SCAN_NODE_TIME);
     }
 
-    public void setFinalizeScanNodeStartTime() {
-        this.finalizeScanNodeStartTime = TimeUtils.getStartTimeMs();
+    public void setFinalizeScanNodeStartTime(String id) {
+        // this.finalizeScanNodeStartTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).startStep(FINALIZE_SCAN_NODE_TIME);
     }
 
-    public void setFinalizeScanNodeFinishTime() {
-        this.finalizeScanNodeFinishTime = TimeUtils.getStartTimeMs();
+    public void setFinalizeScanNodeFinishTime(String id) {
+        // this.finalizeScanNodeFinishTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).stopStep(FINALIZE_SCAN_NODE_TIME);
     }
 
-    public void setGetSplitsStartTime() {
-        this.getSplitsStartTime = TimeUtils.getStartTimeMs();
+    public void setGetSplitsStartTime(String id) {
+        // this.getSplitsStartTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).startStep(GET_SPLITS_TIME);
+        getNodeTimer(id).startStep(GET_PARTITIONS_TIME);
     }
 
-    public void setGetPartitionsFinishTime() {
-        this.getPartitionsFinishTime = TimeUtils.getStartTimeMs();
+    public void setGetPartitionsFinishTime(String id) {
+        // this.getPartitionsFinishTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).stopStep(GET_PARTITIONS_TIME);
+        getNodeTimer(id).startStep(GET_PARTITION_FILES_TIME);
     }
 
-    public void setGetPartitionFilesFinishTime() {
-        this.getPartitionFilesFinishTime = TimeUtils.getStartTimeMs();
+    public void setGetPartitionFilesFinishTime(String id) {
+        // this.getPartitionFilesFinishTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).stopStep(GET_PARTITION_FILES_TIME);
     }
 
-    public void setGetSplitsFinishTime() {
-        this.getSplitsFinishTime = TimeUtils.getStartTimeMs();
+    // public void setGetSplitsFinishTime() {
+    //     this.getSplitsFinishTime = TimeUtils.getStartTimeMs();
+    // }
+
+    public void setGetSplitsFinishTime(String id) {
+        // getNodeTimer(id).stopStep(GET_SPLITS_TIME);
+        getNodeTimer(id).stopStep(GET_SPLITS_TIME);
+        getNodeTimer(id).startStep(CREATE_SCAN_RANGE_TIME);
     }
 
-    public void setCreateScanRangeFinishTime() {
-        this.createScanRangeFinishTime = TimeUtils.getStartTimeMs();
+    public void setCreateScanRangeFinishTime(String id) {
+        // this.createScanRangeFinishTime = TimeUtils.getStartTimeMs();
+        getNodeTimer(id).stopStep(CREATE_SCAN_RANGE_TIME);
     }
 
     public void setQueryDistributedFinishTime() {
@@ -651,6 +790,19 @@ public class SummaryProfile {
             return "N/A";
         }
         return RuntimeProfile.printCounter(end - start, unit);
+    }
+
+    private String getPrettyTime(long sum, long count, double avg, long max, long min, TUnit unit) {
+        return RuntimeProfile.SUM_TIME_PRE
+                + RuntimeProfile.printCounter(sum, unit) + ", "
+                + RuntimeProfile.CNT_TIME_PRE
+                + RuntimeProfile.printCounter((long) count, TUnit.UNIT) + ", "
+                + RuntimeProfile.AVG_TIME_PRE
+                + RuntimeProfile.printCounter((long) avg, unit) + ", "
+                + RuntimeProfile.MAX_TIME_PRE
+                + RuntimeProfile.printCounter(max, unit) + ", "
+                + RuntimeProfile.MIN_TIME_PRE
+                + RuntimeProfile.printCounter(min, unit);
     }
 
     public void setTransactionBeginTime(TransactionType type) {

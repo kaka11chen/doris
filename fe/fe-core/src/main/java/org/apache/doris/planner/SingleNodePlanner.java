@@ -72,6 +72,9 @@ import org.apache.doris.datasource.jdbc.source.JdbcScanNode;
 import org.apache.doris.datasource.maxcompute.source.MaxComputeScanNode;
 import org.apache.doris.datasource.odbc.source.OdbcScanNode;
 import org.apache.doris.datasource.paimon.source.PaimonScanNode;
+import org.apache.doris.fs.CachingDirectoryLister;
+import org.apache.doris.fs.DirectoryLister;
+import org.apache.doris.fs.TransactionScopeCachingDirectoryListerFactory;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.rewrite.mvrewrite.MVSelectFailedException;
 import org.apache.doris.statistics.StatisticalType;
@@ -84,6 +87,8 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import io.airlift.units.DataSize;
+import io.airlift.units.DataSize.Unit;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -97,6 +102,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -113,8 +119,12 @@ public class SingleNodePlanner {
     private final ArrayList<ScanNode> scanNodes = Lists.newArrayList();
     private Map<Analyzer, List<ScanNode>> selectStmtToScanNodes = Maps.newHashMap();
 
+    private final DirectoryLister directoryLister;
+
     public SingleNodePlanner(PlannerContext ctx) {
         this.ctx = ctx;
+        this.directoryLister = new TransactionScopeCachingDirectoryListerFactory(new DataSize(100, Unit.MEGABYTE), Optional.empty()).get(
+                new CachingDirectoryLister(OptionalLong.of(60L), 1024 * 1024 * 1024, Collections.emptyList()));
     }
 
     public PlannerContext getPlannerContext() {
@@ -1976,7 +1986,7 @@ public class SingleNodePlanner {
                         scanNode = new IcebergScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true);
                         break;
                     case HIVE:
-                        scanNode = new HiveScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true);
+                        scanNode = new HiveScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true, directoryLister);
                         ((HiveScanNode) scanNode).setTableSample(tblRef.getTableSample());
                         break;
                     default:

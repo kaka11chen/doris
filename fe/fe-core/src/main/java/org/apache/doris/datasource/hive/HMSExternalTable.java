@@ -24,6 +24,7 @@ import org.apache.doris.catalog.PartitionItem;
 import org.apache.doris.catalog.PartitionType;
 import org.apache.doris.catalog.PrimitiveType;
 import org.apache.doris.catalog.ScalarType;
+import org.apache.doris.catalog.TableIf;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.Config;
@@ -31,6 +32,8 @@ import org.apache.doris.datasource.ExternalTable;
 import org.apache.doris.datasource.SchemaCacheValue;
 import org.apache.doris.datasource.hudi.HudiUtils;
 import org.apache.doris.datasource.iceberg.IcebergUtils;
+import org.apache.doris.fs.DirectoryLister;
+import org.apache.doris.fs.SimpleDirectoryLister;
 import org.apache.doris.mtmv.MTMVMaxTimestampSnapshot;
 import org.apache.doris.mtmv.MTMVRefreshContext;
 import org.apache.doris.mtmv.MTMVRelatedTableIf;
@@ -897,7 +900,8 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
     // Get all files related to given partition values
     // If sampleSize > 0, randomly choose part of partitions of the whole table.
     private List<HiveMetaStoreCache.FileCacheValue> getFilesForPartitions(
-            HiveMetaStoreCache.HivePartitionValues partitionValues, int sampleSize) {
+            HiveMetaStoreCache.HivePartitionValues partitionValues,
+            int sampleSize) {
         if (isView()) {
             return Lists.newArrayList();
         }
@@ -932,7 +936,7 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
         }
         // Get files for all partitions.
         String bindBrokerName = catalog.bindBrokerName();
-        return cache.getFilesByPartitionsWithoutCache(hivePartitions, bindBrokerName);
+        return cache.getFilesByPartitionsWithoutCache(hivePartitions, bindBrokerName, new SimpleDirectoryLister(), null);
     }
 
     @Override

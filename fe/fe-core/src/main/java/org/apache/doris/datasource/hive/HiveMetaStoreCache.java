@@ -25,6 +25,7 @@ import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.ListPartitionItem;
 import org.apache.doris.catalog.PartitionItem;
 import org.apache.doris.catalog.PartitionKey;
+import org.apache.doris.catalog.TableIf;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.CacheFactory;
@@ -39,7 +40,10 @@ import org.apache.doris.datasource.CacheException;
 import org.apache.doris.datasource.ExternalMetaCacheMgr;
 import org.apache.doris.datasource.hive.AcidInfo.DeleteDeltaInfo;
 import org.apache.doris.datasource.property.PropertyConverter;
+import org.apache.doris.fs.DirectoryLister;
 import org.apache.doris.fs.FileSystemCache;
+import org.apache.doris.fs.RemoteIterator;
+import org.apache.doris.fs.SimpleDirectoryLister;
 import org.apache.doris.fs.remote.RemoteFile;
 import org.apache.doris.fs.remote.RemoteFileSystem;
 import org.apache.doris.fs.remote.dfs.DFSFileSystem;
@@ -81,6 +85,8 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.net.URI;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
@@ -195,7 +201,7 @@ public class HiveMetaStoreCache {
 
             @Override
             public FileCacheValue load(FileCacheKey key) {
-                return loadFiles(key);
+                return loadFiles(key, new SimpleDirectoryLister(), null);
             }
         };
 
@@ -349,7 +355,10 @@ public class HiveMetaStoreCache {
     private FileCacheValue getFileCache(String location, String inputFormat,
             JobConf jobConf,
             List<String> partitionValues,
-            String bindBrokerName) throws UserException {
+            String bindBrokerName,
+            DirectoryLister directoryLister,
+            TableIf table) throws UserException {
+        LOG.info("getFileCache: {}", table.getName());
         FileCacheValue result = new FileCacheValue();
         RemoteFileSystem fs = Env.getCurrentEnv().getExtMetaCacheMgr().getFsCache().getRemoteFileSystem(
                 new FileSystemCache.FileSystemCacheKey(LocationPath.getFSIdentity(
@@ -364,28 +373,46 @@ public class HiveMetaStoreCache {
         //      /user/hive/warehouse/region_tmp_union_all2/2
         // So we need to recursively list data location.
         // https://blog.actorsfit.com/a?ID=00550-ce56ec63-1bff-4b0c-a6f7-447b93efaa31
-        List<RemoteFile> remoteFiles = new ArrayList<>();
-        Status status = fs.listFiles(location, true, remoteFiles);
-        if (status.ok()) {
-            for (RemoteFile remoteFile : remoteFiles) {
+        // List<RemoteFile> remoteFiles = new ArrayList<>();
+        // Status status = fs.listFiles(location, true, remoteFiles);
+        // if (status.ok()) {
+        //     for (RemoteFile remoteFile : remoteFiles) {
+        //         String srcPath = remoteFile.getPath().toString();
+        //         LocationPath locationPath = new LocationPath(srcPath, catalog.getProperties());
+        //         result.addFile(remoteFile, locationPath);
+        //     }
+        // } else if (status.getErrCode().equals(ErrCode.NOT_FOUND)) {
+        //     // User may manually remove partition under HDFS, in this case,
+        //     // Hive doesn't aware that the removed partition is missing.
+        //     // Here is to support this case without throw an exception.
+        //     LOG.warn(String.format("File %s not exist.", location));
+        // } else {
+        //     throw new RuntimeException(status.getErrMsg());
+        // }
+
+        try {
+            RemoteIterator<RemoteFile> iterator = directoryLister.listFilesRecursively(fs, table, location);
+            while (iterator.hasNext()) {
+                RemoteFile remoteFile = iterator.next();
                 String srcPath = remoteFile.getPath().toString();
                 LocationPath locationPath = new LocationPath(srcPath, catalog.getProperties());
                 result.addFile(remoteFile, locationPath);
             }
-        } else if (status.getErrCode().equals(ErrCode.NOT_FOUND)) {
+        } catch (FileNotFoundException e) {
             // User may manually remove partition under HDFS, in this case,
             // Hive doesn't aware that the removed partition is missing.
             // Here is to support this case without throw an exception.
             LOG.warn(String.format("File %s not exist.", location));
-        } else {
-            throw new RuntimeException(status.getErrMsg());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
         // Must copy the partitionValues to avoid concurrent modification of key and value
         result.setPartitionValues(Lists.newArrayList(partitionValues));
         return result;
     }
 
-    private FileCacheValue loadFiles(FileCacheKey key) {
+    private FileCacheValue loadFiles(FileCacheKey key, DirectoryLister directoryLister, TableIf table) {
+        LOG.info("loadFiles: {}", table.getName());
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         try {
             Thread.currentThread().setContextClassLoader(ClassLoader.getSystemClassLoader());
@@ -410,7 +437,7 @@ public class HiveMetaStoreCache {
             FileInputFormat.setInputPaths(jobConf, finalLocation.get());
             try {
                 FileCacheValue result = getFileCache(finalLocation.get(), key.inputFormat, jobConf,
-                        key.getPartitionValues(), key.bindBrokerName);
+                        key.getPartitionValues(), key.bindBrokerName, directoryLister, table);
                 // Replace default hive partition with a null_string.
                 for (int i = 0; i < result.getValuesSize(); i++) {
                     if (HIVE_DEFAULT_PARTITION.equals(result.getPartitionValues().get(i))) {
@@ -464,19 +491,28 @@ public class HiveMetaStoreCache {
     }
 
     public List<FileCacheValue> getFilesByPartitionsWithCache(List<HivePartition> partitions,
-                                                              String bindBrokerName) {
-        return getFilesByPartitions(partitions, true, true, bindBrokerName);
+                                                              String bindBrokerName,
+                                                              DirectoryLister directoryLister,
+                                                              TableIf table) {
+        LOG.info("getFilesByPartitionsWithCache: {}", table.getName());
+        return getFilesByPartitions(partitions, true, true, bindBrokerName, directoryLister, table);
     }
 
     public List<FileCacheValue> getFilesByPartitionsWithoutCache(List<HivePartition> partitions,
-                                                                 String bindBrokerName) {
-        return getFilesByPartitions(partitions, false, true, bindBrokerName);
+                                                                 String bindBrokerName,
+                                                                 DirectoryLister directoryLister,
+                                                                 TableIf table) {
+        LOG.info("getFilesByPartitionsWithoutCache: {}", table.getName());
+        return getFilesByPartitions(partitions, false, true, bindBrokerName, directoryLister, table);
     }
 
     public List<FileCacheValue> getFilesByPartitions(List<HivePartition> partitions,
                                                      boolean withCache,
                                                      boolean concurrent,
-                                                     String bindBrokerName) {
+                                                     String bindBrokerName,
+                                                     DirectoryLister directoryLister,
+                                                     TableIf table) {
+        LOG.info("getFilesByPartitions: {}, partitions.size(): {}", table.getName(), partitions.size());
         long start = System.currentTimeMillis();
         List<FileCacheKey> keys = partitions.stream().map(p -> p.isDummyPartition()
                 ? FileCacheKey.createDummyCacheKey(
@@ -488,17 +524,20 @@ public class HiveMetaStoreCache {
         List<FileCacheValue> fileLists;
         try {
             if (withCache) {
+                LOG.info("getFilesByPartitions withCache: {}", table.getName());
                 fileLists = new ArrayList<>(fileCacheRef.get().getAll(keys).values());
             } else {
                 if (concurrent) {
+                    LOG.info("getFilesByPartitions concurrent: {}", table.getName());
                     List<Future<FileCacheValue>> pList = keys.stream().map(
-                            key -> fileListingExecutor.submit(() -> loadFiles(key))).collect(Collectors.toList());
+                            key -> fileListingExecutor.submit(() -> loadFiles(key, directoryLister, table))).collect(Collectors.toList());
                     fileLists = Lists.newArrayListWithExpectedSize(keys.size());
                     for (Future<FileCacheValue> p : pList) {
                         fileLists.add(p.get());
                     }
                 } else {
-                    fileLists = keys.stream().map(this::loadFiles).collect(Collectors.toList());
+                    LOG.info("getFilesByPartitions no concurrent: {}, key.size(): {}", table.getName(), keys.size());
+                    fileLists = keys.stream().map((key) -> loadFiles(key, directoryLister, table)).collect(Collectors.toList());
                 }
             }
         } catch (ExecutionException e) {

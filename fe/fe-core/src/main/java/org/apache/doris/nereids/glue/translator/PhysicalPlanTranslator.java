@@ -64,6 +64,9 @@ import org.apache.doris.datasource.maxcompute.source.MaxComputeScanNode;
 import org.apache.doris.datasource.odbc.source.OdbcScanNode;
 import org.apache.doris.datasource.paimon.PaimonExternalTable;
 import org.apache.doris.datasource.paimon.source.PaimonScanNode;
+import org.apache.doris.fs.CachingDirectoryLister;
+import org.apache.doris.fs.DirectoryLister;
+import org.apache.doris.fs.TransactionScopeCachingDirectoryListerFactory;
 import org.apache.doris.nereids.exceptions.AnalysisException;
 import org.apache.doris.nereids.properties.DistributionSpec;
 import org.apache.doris.nereids.properties.DistributionSpecAny;
@@ -206,6 +209,8 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import io.airlift.units.DataSize;
+import io.airlift.units.DataSize.Unit;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -219,6 +224,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -237,6 +243,8 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
     private final StatsErrorEstimator statsErrorEstimator;
     private final PlanTranslatorContext context;
 
+    private DirectoryLister directoryLister;
+
     public PhysicalPlanTranslator() {
         this(null, null);
     }
@@ -248,6 +256,9 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
     public PhysicalPlanTranslator(PlanTranslatorContext context, StatsErrorEstimator statsErrorEstimator) {
         this.context = context;
         this.statsErrorEstimator = statsErrorEstimator;
+        this.directoryLister = new TransactionScopeCachingDirectoryListerFactory(
+                new DataSize(100, Unit.MEGABYTE), Optional.empty()).get(
+                        new CachingDirectoryLister(OptionalLong.of(60L), 1024 * 1024 * 1024, Collections.emptyList()));
     }
 
     /**
@@ -277,6 +288,9 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         }
         for (ScanNode scanNode : context.getScanNodes()) {
             Utils.execWithUncheckedException(scanNode::finalizeForNereids);
+            if (ConnectContext.get().getExecutor() != null) {
+                ConnectContext.get().getExecutor().getSummaryProfile().processNode(scanNode.getId().toString());
+            }
         }
         return rootFragment;
     }
@@ -595,7 +609,7 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
                     scanNode = new IcebergScanNode(context.nextPlanNodeId(), tupleDescriptor, false);
                     break;
                 case HIVE:
-                    scanNode = new HiveScanNode(context.nextPlanNodeId(), tupleDescriptor, false);
+                    scanNode = new HiveScanNode(context.nextPlanNodeId(), tupleDescriptor, false, directoryLister);
                     HiveScanNode hiveScanNode = (HiveScanNode) scanNode;
                     hiveScanNode.setSelectedPartitions(fileScan.getSelectedPartitions());
                     if (fileScan.getTableSample().isPresent()) {
