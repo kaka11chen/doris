@@ -218,33 +218,3 @@ inline SharedListenableFuture<Void> null_future =
 } // namespace vectorized
 } // namespace doris
 
-// 使用示例
-//int main() {
-//    ListenableFuture<int> future;
-//
-//    // 添加回调
-//    future.add_callback(
-//            [](int value) {
-//                printf("Got value: %d\n", value);
-//            },
-//            [](auto e) {
-//                try {
-//                    if (e) std::rethrow_exception(e);
-//                } catch (const std::exception& ex) {
-//                    printf("Exception: %s\n", ex.what());
-//                }
-//            }
-//    );
-//
-//    // 链式调用
-//    auto next = future.then([](int x) {
-//                          return x * 2;
-//                      }).then([](int x) {
-//        return std::to_string(x);
-//    });
-//
-//    // 设置结果
-//    future.set_value(42);
-//
-//    return 0;
-//}

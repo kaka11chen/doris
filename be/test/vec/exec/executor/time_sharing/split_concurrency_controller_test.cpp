@@ -50,7 +50,6 @@ TEST_F(SplitConcurrencyControllerTest, test_ramp_down) {
 TEST_F(SplitConcurrencyControllerTest, test_rapid_adjust_for_quick_splits) {
     SplitConcurrencyController controller(10, std::chrono::seconds(1));
 
-    // 测试快速递减
     for (int i = 0; i < 9; ++i) {
         controller.update(200'000'000, 1.0, 10 - i);
         controller.split_finished(100'000'000, 1.0, 10 - i);
@@ -58,7 +57,6 @@ TEST_F(SplitConcurrencyControllerTest, test_rapid_adjust_for_quick_splits) {
                 << "Rapid decrease failed at iteration " << i;
     }
 
-    // 重置状态后测试递增
     controller.update(30'000'000'000, 0.0, 1);
     for (int i = 0; i < 10; ++i) {
         controller.update(200'000'000, 0.0, i + 1);

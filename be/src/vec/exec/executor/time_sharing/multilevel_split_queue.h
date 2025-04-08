@@ -85,9 +85,6 @@ private:
     std::atomic<bool> _interrupted {false};
     mutable std::mutex _mutex;
     std::condition_variable _not_empty;
-
-    //    std::array<std::shared_ptr<CounterStats>, LEVEL_THRESHOLD_SECONDS.size()>
-    //            _selected_level_counters;
 };
 
 } // namespace vectorized

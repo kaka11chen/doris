@@ -109,7 +109,6 @@ private:
     // _limited_scan_thread_pool is a special pool for queries with resource limit
     std::unique_ptr<vectorized::SimplifiedScanScheduler> _local_scan_thread_pool;
     std::unique_ptr<vectorized::SimplifiedScanScheduler> _remote_scan_thread_pool;
-    //std::unique_ptr<ThreadPool> _limited_scan_thread_pool;
     std::shared_ptr<TaskExecutor> _limited_scan_task_executor;
 
     // true is the scheduler is closed.
@@ -134,7 +133,6 @@ class ScannerSplitRunner : public SplitRunner {
 public:
     ScannerSplitRunner(std::string name, std::function<bool()> scan_func)
             : _name(std::move(name)), _scan_func(scan_func), _started(false) {
-        //              _completion_future(_completion_promise.get_future()) {
     }
 
     Status init() override { return Status::OK(); }
@@ -144,7 +142,6 @@ public:
     void close(const Status& status) override {}
 
     std::string get_info() const override {
-        // Implementation needed
         return "";
     }
 
@@ -158,10 +155,7 @@ private:
     std::string _name;
     std::function<bool()> _scan_func;
 
-    //    std::atomic<int> _completed_phases;
     std::atomic<bool> _started;
-    //    std::promise<void> _completion_promise;  // 用于整体完成通知
-    //    std::shared_future<void> _completion_future; // 改为共享future
     SharedListenableFuture<Void> _completion_future;
 };
 
@@ -177,19 +171,10 @@ public:
 
     void stop() {
         _is_stop.store(true);
-        //_scan_thread_pool->shutdown();
-        //_scan_thread_pool->wait();
         _task_executor->stop();
     }
 
     Status start(int max_thread_num, int min_thread_num, int queue_size) {
-        //RETURN_IF_ERROR(ThreadPoolBuilder(_sched_name)
-        //                        .set_min_threads(min_thread_num)
-        //                        .set_max_threads(max_thread_num)
-        //                        .set_max_queue_size(queue_size)
-        //                        .set_cgroup_cpu_ctl(_cgroup_cpu_ctl)
-        //                        .build(&_scan_thread_pool));
-
         TimeSharingTaskExecutor::ThreadConfig thread_config;
         thread_config.thread_name = _sched_name;
         thread_config.max_thread_num = max_thread_num;
@@ -206,8 +191,6 @@ public:
 
     Status submit_scan_task(SimplifiedScanTask scan_task) {
         if (!_is_stop) {
-            //return _scan_thread_pool->submit_func([scan_task] { scan_task.scan_func(); });
-
             auto split_runner = std::make_shared<ScannerSplitRunner>("scanner_split_runner",
                                                                      scan_task.scan_func);
             RETURN_IF_ERROR(split_runner->init());
@@ -305,7 +288,6 @@ public:
     std::shared_ptr<TaskExecutor> task_executor() const { return _task_executor; }
 
 private:
-    //std::unique_ptr<ThreadPool> _scan_thread_pool;
     std::atomic<bool> _is_stop;
     std::weak_ptr<CgroupCpuCtl> _cgroup_cpu_ctl;
     std::string _sched_name;

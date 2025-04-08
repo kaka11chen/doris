@@ -22,7 +22,6 @@
 #include "common/factory_creator.h"
 #include "vec/exec/executor/listenable_future.h"
 #include "vec/exec/executor/split_runner.h"
-#include "vec/exec/executor/stats.h"
 #include "vec/exec/executor/ticker.h"
 #include "vec/exec/executor/time_sharing/priority.h"
 
@@ -40,10 +39,6 @@ public:
     PrioritizedSplitRunner(std::shared_ptr<TimeSharingTaskHandle> task_handle, int split_id,
                            std::shared_ptr<SplitRunner> split_runner,
                            std::shared_ptr<Ticker> ticker);
-
-    //    PrioritizedSplitRunner(CounterStats& globalCpuTimeMicros,
-    //                           CounterStats& globalScheduledTimeMicros,
-    //                           TimeStats& blockedQuantaWallTime, TimeStats& unblockedQuantaWallTime);
 
     Status init();
 
@@ -79,7 +74,6 @@ private:
     SharedListenableFuture<Void> _finished_future {};
 
     std::atomic<bool> _closed {false};
-    //    std::atomic<Priority> _priority {Priority {0, 0}};
     Priority _priority {0, 0};
     mutable std::mutex _priority_mutex;
     std::atomic<int64_t> _last_ready {0};

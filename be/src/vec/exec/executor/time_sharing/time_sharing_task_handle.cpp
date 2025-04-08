@@ -37,19 +37,6 @@ Status TimeSharingTaskHandle::init() {
     return Status::OK();
 }
 
-//Priority TimeSharingTaskHandle::add_scheduled_nanos(int64_t duration_nanos) {
-//    std::lock_guard<std::mutex> lock(_mutex);
-//    _concurrency_controller.update(duration_nanos, _utilization_supplier(),
-//                                   _running_leaf_splits.size());
-//    _scheduled_nanos += duration_nanos;
-//
-//    Priority new_priority =
-//            _split_queue->update_priority(_priority.load(), duration_nanos, _scheduled_nanos);
-//
-//    _priority.store(new_priority);
-//    return new_priority;
-//}
-
 Priority TimeSharingTaskHandle::add_scheduled_nanos(int64_t duration_nanos) {
     std::lock_guard<std::mutex> lock(_mutex);
     _concurrency_controller.update(duration_nanos, _utilization_supplier(),
@@ -62,22 +49,6 @@ Priority TimeSharingTaskHandle::add_scheduled_nanos(int64_t duration_nanos) {
     _priority = new_priority;
     return new_priority;
 }
-
-//Priority TimeSharingTaskHandle::reset_level_priority() {
-//    std::lock_guard<std::mutex> lock(_mutex);
-//
-//    Priority current_priority = _priority.load();
-//    int64_t level_min_priority =
-//            _split_queue->get_level_min_priority(current_priority.level(), _scheduled_nanos);
-//
-//    if (current_priority.level_priority() < level_min_priority) {
-//        Priority new_priority(current_priority.level(), level_min_priority);
-//        _priority.store(new_priority);
-//        return new_priority;
-//    }
-//
-//    return current_priority;
-//}
 
 Priority TimeSharingTaskHandle::reset_level_priority() {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -98,10 +69,6 @@ Priority TimeSharingTaskHandle::reset_level_priority() {
 bool TimeSharingTaskHandle::is_closed() const {
     return _closed.load();
 }
-
-//Priority TimeSharingTaskHandle::priority() const {
-//    return _priority.load();
-//}
 
 Priority TimeSharingTaskHandle::priority() const {
     std::lock_guard<std::mutex> lock(_mutex);

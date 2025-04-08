@@ -87,10 +87,6 @@ TimeSharingTaskExecutor::~TimeSharingTaskExecutor() {
     for (auto& split : splits_to_destroy) {
         split->close(Status::OK());
     }
-
-    //if (_thread_pool) {
-    //    _thread_pool->shutdown();
-    //}
 }
 
 Status TimeSharingTaskExecutor::start() {
@@ -124,7 +120,6 @@ Status TimeSharingTaskExecutor::_add_runner_thread() {
                 return;
             }
 
-            //            ScopedRunnerTracker tracker(_mutex, _running_splits, split);
             {
                 std::lock_guard<std::mutex> guard(_mutex);
                 _running_splits.insert(split);
@@ -354,11 +349,8 @@ void TimeSharingTaskExecutor::_start_split(std::shared_ptr<PrioritizedSplitRunne
 
 std::shared_ptr<PrioritizedSplitRunner> TimeSharingTaskExecutor::_poll_next_split_worker(
         std::lock_guard<std::mutex>& guard) {
-    // 遍历任务列表，找到第一个能产生分片的任务
-    // 然后将该任务移到列表末尾，实现轮询调度
     for (auto it = _tasks.begin(); it != _tasks.end();) {
         auto task = it->second;
-        // 跳过已经运行配置的最大驱动数的任务
         if (task->running_leaf_splits() >=
             task->max_concurrency_per_task().value_or(_max_concurrency_per_task)) {
             ++it;
@@ -367,7 +359,6 @@ std::shared_ptr<PrioritizedSplitRunner> TimeSharingTaskExecutor::_poll_next_spli
 
         auto split = task->poll_next_split();
         if (split) {
-            // 将任务移到列表末尾
             auto task_copy = task;
             auto task_id = it->first;
             it = _tasks.erase(it);
@@ -380,17 +371,6 @@ std::shared_ptr<PrioritizedSplitRunner> TimeSharingTaskExecutor::_poll_next_spli
 }
 
 void TimeSharingTaskExecutor::_record_leaf_splits_size(std::lock_guard<std::mutex>& guard) {
-    //    auto now = _ticker->read();
-    //    auto time_difference = now - _last_leaf_splits_size_record_time;
-    //
-    //    if (time_difference > 0) {
-    //        // 记录当前叶子分片的数量和持续时间
-    //        //        _leaf_splits_size.add(_last_leaf_splits_size, std::chrono::nanoseconds(time_difference));
-    //        _last_leaf_splits_size_record_time = now;
-    //    }
-    //    // always record new lastLeafSplitsSize as it might have changed
-    //    // even if timeDifference is 0
-    //    _last_leaf_splits_size = _all_splits.size() - _intermediate_splits.size();
 }
 
 void TimeSharingTaskExecutor::_interrupt() {

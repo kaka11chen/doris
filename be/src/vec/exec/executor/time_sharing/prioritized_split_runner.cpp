@@ -42,20 +42,6 @@ PrioritizedSplitRunner::PrioritizedSplitRunner(std::shared_ptr<TimeSharingTaskHa
     update_level_priority();
 }
 
-//PrioritizedSplitRunner::PrioritizedSplitRunner(CounterStats& globalCpuTimeMicros,
-//                                               CounterStats& globalScheduledTimeMicros,
-//                                               TimeStats& blockedQuantaWallTime,
-//                                               TimeStats& unblockedQuantaWallTime)
-//        : _created_nanos(std::chrono::steady_clock::now().time_since_epoch().count()),
-//          _split_id(0),
-//          _worker_id(_next_worker_id.fetch_add(1, std::memory_order_relaxed)),
-//          _ticker(std::make_shared<SystemTicker>()),
-//          _global_cpu_time_micros(globalCpuTimeMicros),
-//          _global_scheduled_time_micros(globalScheduledTimeMicros),
-//          _blocked_quanta_wall_time(blockedQuantaWallTime),
-//          _unblocked_quanta_wall_time(unblockedQuantaWallTime) {
-//}
-
 Status PrioritizedSplitRunner::init() {
     return _split_runner->init();
 }
@@ -123,8 +109,6 @@ Result<SharedListenableFuture<Void>> PrioritizedSplitRunner::process() {
 
     _scheduled_nanos.fetch_add(quanta_scheduled_nanos);
 
-    // _priority.store(_task_handle->add_scheduled_nanos(quanta_scheduled_nanos));
-
     {
         std::lock_guard<std::mutex> lock(_priority_mutex);
         _priority = _task_handle->add_scheduled_nanos(quanta_scheduled_nanos);
@@ -143,12 +127,6 @@ void PrioritizedSplitRunner::set_ready() {
  *
  * @return true if the level changed.
  */
-//bool PrioritizedSplitRunner::update_level_priority() {
-//    Priority new_priority = _task_handle->priority();
-//    Priority old_priority = _priority.exchange(new_priority);
-//    return new_priority.level() != old_priority.level();
-//}
-
 bool PrioritizedSplitRunner::update_level_priority() {
     std::lock_guard<std::mutex> lock(_priority_mutex);
     Priority new_priority = _task_handle->priority();
@@ -156,11 +134,6 @@ bool PrioritizedSplitRunner::update_level_priority() {
     _priority = new_priority;
     return new_priority.level() != old_priority.level();
 }
-
-//
-//void PrioritizedSplitRunner::reset_level_priority() {
-//     _priority.store(_task_handle->reset_level_priority());
-//}
 
 void PrioritizedSplitRunner::reset_level_priority() {
     std::lock_guard<std::mutex> lock(_priority_mutex);
@@ -175,31 +148,12 @@ int PrioritizedSplitRunner::split_id() const {
     return _split_id;
 }
 
-//Priority PrioritizedSplitRunner::priority() const {
-//    return _priority.load();
-//}
-
 Priority PrioritizedSplitRunner::priority() const {
     std::lock_guard<std::mutex> lock(_priority_mutex);
     return _priority;
 }
 
 std::string PrioritizedSplitRunner::get_info() const {
-    // const auto now = std::chrono::steady_clock::now();
-    // const int64_t current_time = now.time_since_epoch().count();
-    // const int64_t wall_time = (current_time - _start.load()) / 1'000'000; // 转换为毫秒
-
-    // return fmt::format(
-    //     "Split {:<15}-{} {} (start = {:.1f}, wall = {} ms, cpu = {} ms, wait = {} ms, calls = {})",
-    //     _task_handle->get_task_id(),       // 假设返回字符串类型
-    //     _split_id,                         // 整数类型
-    //     _split_runner->get_info(),         // 需要确保SplitRunner有get_info()
-    //     _start.load() / 1'000'000.0,       // 转换为毫秒并保留1位小数
-    //     wall_time,                         // 已计算的耗时
-    //     _global_cpu_time_micros.get() / 1000, // 微秒转毫秒
-    //     _wait_nanos.load() / 1'000'000,    // 纳秒转毫秒
-    //     _process_calls.load()              // 调用次数
-    // );
     return "";
 }
 

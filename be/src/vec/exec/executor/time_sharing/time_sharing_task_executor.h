@@ -32,7 +32,6 @@
 #include "bvar/latency_recorder.h"
 #include "util/threadpool.h"
 #include "vec/exec/executor/listenable_future.h"
-#include "vec/exec/executor/stats.h"
 #include "vec/exec/executor/task_executor.h"
 #include "vec/exec/executor/ticker.h"
 #include "vec/exec/executor/time_sharing/multilevel_split_queue.h"
@@ -138,39 +137,6 @@ public:
     ThreadPool* thread_pool() const { return _thread_pool.get(); };
 
 private:
-    /*class ScopedRunnerTracker {
-    public:
-        ScopedRunnerTracker(
-                std::mutex& mutex,
-                std::unordered_set<std::shared_ptr<PrioritizedSplitRunner>>& running_splits,
-                std::shared_ptr<PrioritizedSplitRunner> split)
-                : _mutex(mutex), _running_splits(running_splits), _split(std::move(split)) {
-            std::lock_guard<std::mutex> guard(_mutex);
-            _running_splits.insert(_split);
-        }
-
-        ~ScopedRunnerTracker() {
-            std::lock_guard<std::mutex> guard(_mutex);
-            _running_splits.erase(_split);
-        }
-
-    private:
-        std::mutex& _mutex;
-        std::unordered_set<std::shared_ptr<PrioritizedSplitRunner>>& _running_splits;
-        std::shared_ptr<PrioritizedSplitRunner> _split;
-    };*/
-
-    /*class TaskRunner {
-    public:
-        TaskRunner(TimeSharingTaskExecutor& executor);
-        void run();
-        void stop();
-
-    private:
-        TimeSharingTaskExecutor& _executor;
-        std::atomic<bool> _running {true};
-    };*/
-
     Status _add_runner_thread();
     void _schedule_task_if_necessary(std::shared_ptr<TimeSharingTaskHandle> task_handle,
                                      std::lock_guard<std::mutex>& guard);
@@ -199,8 +165,6 @@ private:
     mutable std::mutex _mutex;
     std::condition_variable _condition;
     std::atomic<bool> _stopped {false};
-
-    //std::vector<std::unique_ptr<TaskRunner>> _task_runners;
 
     std::unordered_map<TaskId, std::shared_ptr<TimeSharingTaskHandle>> _tasks;
 

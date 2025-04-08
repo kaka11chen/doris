@@ -227,8 +227,6 @@ Status PlanFragmentExecutor::prepare(const TExecPlanFragmentParams& request) {
     vectorized::TaskId task_id(
             fmt::format("{}-{}", print_id(_query_ctx->query_id()), _fragment_id));
     auto thread_token = _query_ctx->get_token();
-    //        _simple_scan_scheduler = _query_ctx->get_scan_scheduler();
-    //        _remote_scan_task_scheduler = _query_ctx->get_remote_scan_scheduler();
     if (thread_token) {
         _task_executor = _exec_env->scanner_scheduler()->limited_scan_task_executor();
     } else {
