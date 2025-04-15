@@ -102,7 +102,9 @@ enum class TypeIndex {
     Decimal256 = 45,
     IPv4 = 46,
     IPv6 = 47,
-    Int256
+    Int256,
+    Lazy,
+    Dictionary
 };
 
 struct Consted {
@@ -940,6 +942,10 @@ inline const char* getTypeName(TypeIndex idx) {
         return "AggState";
     case TypeIndex::Time:
         return "Time";
+    case TypeIndex::Lazy:
+        return "Lazy";
+    case TypeIndex::Dictionary:
+        return "Dictionary";
     }
 
     throw Exception(Status::FatalError("__builtin_unreachable"));

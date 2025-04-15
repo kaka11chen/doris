@@ -174,6 +174,8 @@ public:
 
     virtual bool is_nullable() const { return false; }
 
+    virtual bool is_lazy() const { return false; }
+
     /* the data type create from type_null, NULL literal*/
     virtual bool is_null_literal() const { return false; }
 
