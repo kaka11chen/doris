@@ -459,6 +459,7 @@ import org.apache.doris.nereids.DorisParser.WithRemoteStorageSystemContext;
 import org.apache.doris.nereids.DorisParserBaseVisitor;
 import org.apache.doris.nereids.StatementContext;
 import org.apache.doris.nereids.analyzer.UnboundAlias;
+import org.apache.doris.nereids.analyzer.UnboundBlackholeSink;
 import org.apache.doris.nereids.analyzer.UnboundFunction;
 import org.apache.doris.nereids.analyzer.UnboundInlineTable;
 import org.apache.doris.nereids.analyzer.UnboundOneRowRelation;
@@ -999,6 +1000,8 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalSort;
 import org.apache.doris.nereids.trees.plans.logical.LogicalSubQueryAlias;
 import org.apache.doris.nereids.trees.plans.logical.LogicalUnion;
 import org.apache.doris.nereids.trees.plans.logical.LogicalUsingJoin;
+import org.apache.doris.nereids.trees.plans.logical.LogicalCatalogRelation;
+import org.apache.doris.nereids.trees.plans.logical.LogicalOlapScan;
 import org.apache.doris.nereids.types.AggStateType;
 import org.apache.doris.nereids.types.ArrayType;
 import org.apache.doris.nereids.types.BigIntType;
@@ -1302,6 +1305,7 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
                 ConnectContext.get().getSessionVariable().getPartialUpdateNewRowPolicy(),
                 ctx.tableId == null ? DMLCommandType.INSERT : DMLCommandType.GROUP_COMMIT,
                 plan);
+
         Optional<LogicalPlan> cte = Optional.empty();
         if (ctx.cte() != null) {
             cte = Optional.ofNullable(withCte(plan, ctx.cte()));
@@ -8356,6 +8360,40 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
             isForce = true;
         }
         return new WarmUpClusterCommand(warmUpItems, srcCluster, dstCluster, isForce, isWarmUpWithTable);
+    }
+
+    @Override
+    public LogicalPlan visitWarmUpSelect(DorisParser.WarmUpSelectContext ctx) {
+        LogicalPlan plan = plan(ctx.query());
+        
+        // Check if the plan contains multiple scan nodes (multi-table queries)
+        // Count all catalog relation scan nodes in the plan tree
+        int scanNodeCount = plan.collectToList(node -> node instanceof LogicalCatalogRelation).size();
+        if (scanNodeCount > 1) {
+            throw new IllegalStateException("WARM UP SELECT only supports single table queries, multi-table queries are not allowed");
+        }
+        
+        LogicalSink<?> sink = new UnboundBlackholeSink<>(plan);
+        return withExplain(sink, ctx.explain());
+
+        // // Parse the select statement
+        // LogicalPlan plan = visitQuery(ctx.query());
+        //
+        // // Parse properties if present
+        // Optional<Map<String, String>> properties = Optional.empty();
+        // if (ctx.properties != null) {
+        //     properties = Optional.of(visitPropertyClause(ctx.properties));
+        // }
+        //
+        // //List<String> nameParts, List<String> colNames, List<String> hints,
+        // //             List<String> partitions, CHILD_TYPE child
+        // LogicalSink<?> sink = new UnboundBlackholeSink<>(ImmutableList.of("sys", "blackhole"), ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), plan);
+        // Optional<LogicalPlan> cte = Optional.empty();
+        // // if (ctx.cte() != null) {
+        // //     cte = Optional.ofNullable(withCte(plan, ctx.cte()));
+        // // }
+        // LogicalPlan command = new InsertIntoTableCommand(sink, Optional.empty(), Optional.empty(), cte, true, Optional.empty());
+        // return withExplain(command, ctx.explain());
     }
 
     @Override

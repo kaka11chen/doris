@@ -52,6 +52,24 @@ struct ScannerCounter {
     int64_t num_rows_unselected; // rows filtered by predicates
 };
 
+// Counter for warm up cache
+struct WarmUpCacheCounter {
+    WarmUpCacheCounter()
+            : cache_read_bytes(0),
+              cache_write_bytes(0),
+              cache_read_time_us(0),
+              cache_write_time_us(0),
+              cache_read_count(0),
+              cache_write_count(0) {}
+
+    int64_t cache_read_bytes;
+    int64_t cache_write_bytes;
+    int64_t cache_read_time_us;
+    int64_t cache_write_time_us;
+    int64_t cache_read_count;
+    int64_t cache_write_count;
+};
+
 class Scanner {
 public:
     Scanner(RuntimeState* state, pipeline::ScanLocalStateBase* local_state, int64_t limit,
@@ -241,10 +259,16 @@ protected:
     bool _is_init = true;
 
     ScannerCounter _counter;
+    WarmUpCacheCounter _warm_up_cache_counter;
     int64_t _per_scanner_timer = 0;
     int64_t _projection_timer = 0;
 
     bool _should_stop = false;
+
+    // Warm up cache methods
+    void record_cache_read(int64_t bytes, int64_t time_us);
+    void record_cache_write(int64_t bytes, int64_t time_us);
+    const WarmUpCacheCounter& get_warm_up_cache_counter() const { return _warm_up_cache_counter; }
 };
 
 using ScannerSPtr = std::shared_ptr<Scanner>;

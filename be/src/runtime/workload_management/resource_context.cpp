@@ -20,6 +20,7 @@
 #include <gen_cpp/data.pb.h>
 #include <glog/logging.h>
 
+#include "runtime/runtime_state.h"
 #include "util/time.h"
 
 namespace doris {
@@ -38,6 +39,9 @@ void ResourceContext::to_pb_query_statistics(PQueryStatistics* statistics) const
             io_context_->spill_write_bytes_to_local_storage());
     statistics->set_spill_read_bytes_from_local_storage(
             io_context_->spill_read_bytes_from_local_storage());
+    // Add cache metrics for WARM UP SELECT operations
+    statistics->set_cache_read_bytes(_cache_read_bytes);
+    statistics->set_cache_write_bytes(_cache_write_bytes);
 }
 
 void ResourceContext::to_thrift_query_statistics(TQueryStatistics* statistics) const {
@@ -64,6 +68,41 @@ void ResourceContext::to_thrift_query_statistics(TQueryStatistics* statistics) c
             io_context_->spill_write_bytes_to_local_storage());
     statistics->__set_spill_read_bytes_from_local_storage(
             io_context_->spill_read_bytes_from_local_storage());
+
+    // Add cache metrics for WARM UP SELECT operations
+    statistics->__set_cache_read_bytes(_cache_read_bytes);
+    statistics->__set_cache_write_bytes(_cache_write_bytes);
+}
+}
+
+void ResourceContext::to_thrift_query_statistics(TQueryStatistics* statistics,
+                                                 RuntimeState* state) const {
+    DCHECK(statistics != nullptr);
+
+    // First, set all the standard statistics
+    to_thrift_query_statistics(statistics);
+
+    // Then, add cache metrics from RuntimeState if available
+    if (state != nullptr) {
+        statistics->__set_cache_read_bytes(state->get_datacache_read_bytes());
+        statistics->__set_cache_write_bytes(state->get_datacache_write_bytes());
+    }
+}
+
+void ResourceContext::update_cache_metrics_from_runtime_state(RuntimeState* state) {
+    if (state == nullptr) {
+        return;
+    }
+
+    // For WARM UP SELECT operations, we need to store the cache metrics
+    // from RuntimeState so they can be included in query statistics
+    // This method is called when the BlackholeSink fragment completes
+    _cache_read_bytes = state->get_datacache_read_bytes();
+    _cache_write_bytes = state->get_datacache_write_bytes();
+
+    LOG(INFO) << "Updated cache metrics from RuntimeState for WARM UP SELECT: "
+              << "cache_read_bytes=" << _cache_read_bytes
+              << ", cache_write_bytes=" << _cache_write_bytes;
 }
 
 #include "common/compile_check_end.h"

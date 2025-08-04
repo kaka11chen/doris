@@ -129,10 +129,12 @@ import org.apache.doris.nereids.trees.plans.commands.insert.InsertIntoTableComma
 import org.apache.doris.nereids.trees.plans.commands.insert.InsertOverwriteTableCommand;
 import org.apache.doris.nereids.trees.plans.commands.insert.OlapGroupCommitInsertExecutor;
 import org.apache.doris.nereids.trees.plans.commands.insert.OlapInsertExecutor;
+import org.apache.doris.nereids.trees.plans.distribute.DistributedPlan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalSqlCache;
 import org.apache.doris.planner.GroupCommitScanNode;
 import org.apache.doris.planner.OlapScanNode;
+import org.apache.doris.planner.PlanFragment;
 import org.apache.doris.planner.PlanNode;
 import org.apache.doris.planner.Planner;
 import org.apache.doris.planner.ScanNode;
@@ -1642,7 +1644,13 @@ public class StmtExecutor {
             }
 
             statisticsForAuditLog = batch.getQueryStatistics() == null ? null : batch.getQueryStatistics().toBuilder();
-            context.getState().setEof();
+            
+            // Check if this is a BlackholeSink (WARM UP SELECT) query and handle result reporting
+            if (isBlackholeSinkQuery()) {
+                handleBlackholeSinkResult(coordBase, batch);
+            } else {
+                context.getState().setEof();
+            }
             profile.getSummaryProfile().setQueryFetchResultFinishTime();
         } catch (Exception e) {
             // notify all be cancel running fragment
@@ -2488,5 +2496,70 @@ public class StmtExecutor {
 
     public String getPrepareStmtName() {
         return this.prepareStmtName;
+    }
+
+    /**
+     * Check if the current query is a BlackholeSink (WARM UP SELECT) query
+     */
+    private boolean isBlackholeSinkQuery() {
+        if (planner instanceof NereidsPlanner) {
+            NereidsPlanner nereidsPlanner = (NereidsPlanner) planner;
+            if (nereidsPlanner.getDistributedPlans() != null && !nereidsPlanner.getDistributedPlans().isEmpty()) {
+                // Get the first distributed plan and extract the fragment from its job
+                DistributedPlan firstPlan = nereidsPlanner.getDistributedPlans().values().iterator().next();
+                PlanFragment topFragment = firstPlan.getFragmentJob().getFragment();
+                return topFragment.getSink() instanceof org.apache.doris.planner.BlackholeSink;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Handle result reporting for BlackholeSink (WARM UP SELECT) queries
+     */
+    private void handleBlackholeSinkResult(CoordInterface coordBase, RowBatch batch) {
+        try {
+            // Collect cache metrics from query statistics
+            long prewarmedRows = 0;
+            long prewarmedBytes = 0;
+            long cacheReadBytes = 0;
+            long cacheWriteBytes = 0;
+
+            if (batch.getQueryStatistics() != null) {
+                prewarmedRows = batch.getQueryStatistics().getReturnedRows();
+                prewarmedBytes = batch.getQueryStatistics().getScanBytes();
+                
+                // TODO: Cache metrics will be added in future version
+                // Currently PQueryStatistics doesn't have cache-specific fields
+                // We would need to extend the proto definition to include:
+                // - cache_read_bytes
+                // - cache_write_bytes
+            }
+
+            // If we didn't get rows from statistics, try to get from coordinator
+            if (prewarmedRows == 0 && coordBase instanceof Coordinator) {
+                prewarmedRows = ((Coordinator) coordBase).getNumReceivedRows();
+            }
+
+            // Build info message with cache metrics (JSON format)
+            StringBuilder infoMessage = new StringBuilder();
+            infoMessage.append("{");
+            infoMessage.append("\"status\":\"Success\"");
+            infoMessage.append(",\"prewarmedRows\":").append(prewarmedRows);
+            infoMessage.append(",\"prewarmedBytes\":").append(prewarmedBytes);
+            infoMessage.append(",\"cacheReadBytes\":").append(cacheReadBytes);
+            infoMessage.append(",\"cacheWriteBytes\":").append(cacheWriteBytes);
+            infoMessage.append("}");
+
+            // Set OK status with prewarm information
+            context.getState().setOk(prewarmedRows, 0, infoMessage.toString());
+            
+            LOG.info("WARM UP SELECT completed. Rows: {}, Bytes: {}, CacheRead: {}, CacheWrite: {}", 
+                    prewarmedRows, prewarmedBytes, cacheReadBytes, cacheWriteBytes);
+
+        } catch (Exception e) {
+            LOG.warn("Failed to collect WARM UP SELECT metrics, using default OK response", e);
+            context.getState().setOk();
+        }
     }
 }

@@ -643,6 +643,8 @@ struct TExecPlanFragmentParamsList {
 struct TExecPlanFragmentResult {
   // required in V1
   1: optional Status.TStatus status
+  // metrics for WARM UP SELECT (BlackholeSink) operations
+  2: optional DataSinks.TBlackholeSinkMetrics blackhole_sink_metrics
 }
 
 // CancelPlanFragment

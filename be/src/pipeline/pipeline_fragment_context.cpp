@@ -46,6 +46,7 @@
 #include "pipeline/exec/analytic_sink_operator.h"
 #include "pipeline/exec/analytic_source_operator.h"
 #include "pipeline/exec/assert_num_rows_operator.h"
+#include "pipeline/exec/blackhole_sink_operator.h"
 #include "pipeline/exec/cache_sink_operator.h"
 #include "pipeline/exec/cache_source_operator.h"
 #include "pipeline/exec/datagen_operator.h"
@@ -1166,6 +1167,14 @@ Status PipelineFragmentContext::_create_data_sink(ObjectPool* pool, const TDataS
         }
         break;
     }
+    case TDataSinkType::BLACKHOLE_SINK: {
+        if (!thrift_sink.__isset.blackhole_sink) {
+            return Status::InternalError("Missing blackhole sink.");
+        }
+
+        _sink.reset(new BlackholeSinkOperatorX(next_sink_operator_id(), next_sink_operator_id()));
+        break;
+    }
     default:
         return Status::InternalError("Unsuported sink type in pipeline: {}", thrift_sink.type);
     }
@@ -1810,6 +1819,19 @@ void PipelineFragmentContext::_close_fragment_instance() {
     if (_query_ctx->enable_profile()) {
         _query_ctx->add_fragment_profile(_fragment_id, collect_realtime_profile(),
                                          collect_realtime_load_channel_profile());
+    }
+
+    // Update cache metrics for WARM UP SELECT (BlackholeSink) operations
+    if (_sink && dynamic_cast<BlackholeSinkOperatorX*>(_sink.get())) {
+        // This is a BlackholeSink operation, update the ResourceContext with cache metrics
+        auto resource_ctx = _query_ctx->resource_ctx();
+        if (resource_ctx) {
+            // Update the ResourceContext to include cache metrics from RuntimeState
+            // This ensures that WARM UP SELECT operations report cache read/write bytes
+            resource_ctx->update_cache_metrics_from_runtime_state(_runtime_state.get());
+            VLOG_DEBUG << "Updated cache metrics for WARM UP SELECT operation. "
+                       << "Query: " << print_id(_query_id) << ", Fragment: " << _fragment_id;
+        }
     }
 
     // all submitted tasks done

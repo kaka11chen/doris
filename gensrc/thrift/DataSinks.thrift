@@ -41,6 +41,7 @@ enum TDataSinkType {
     HIVE_TABLE_SINK = 13,
     ICEBERG_TABLE_SINK = 14,
     DICTIONARY_SINK = 15,
+    BLACKHOLE_SINK = 16,
 }
 
 enum TResultSinkType {
@@ -441,6 +442,22 @@ struct TDictionarySink {
     9: optional i64 memory_limit
 }
 
+// Structure to hold WARM UP SELECT metrics
+struct TBlackholeSinkMetrics {
+    1: optional i64 rows_processed = 0
+    2: optional i64 bytes_processed = 0
+    3: optional i64 cache_read_bytes = 0
+    4: optional i64 cache_write_bytes = 0
+}
+
+struct TBlackholeSink {
+    // Blackhole sink configuration for WARM UP SELECT operations
+    // This sink discards all input data while allowing cache population
+    1: optional bool enable_cache_metrics = true
+    2: optional map<string, string> properties
+    3: optional TBlackholeSinkMetrics metrics
+}
+
 struct TDataSink {
   1: required TDataSinkType type
   2: optional TDataStreamSink stream_sink
@@ -456,4 +473,5 @@ struct TDataSink {
   13: optional THiveTableSink hive_table_sink
   14: optional TIcebergTableSink iceberg_table_sink
   15: optional TDictionarySink dictionary_sink
+  16: optional TBlackholeSink blackhole_sink
 }

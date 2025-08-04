@@ -201,6 +201,9 @@ struct TQueryStatistics {
     11: optional i64 scan_bytes_from_remote_storage
     12: optional i64 spill_write_bytes_to_local_storage
     13: optional i64 spill_read_bytes_from_local_storage
+    // Cache metrics for WARM UP SELECT
+    14: optional i64 cache_read_bytes
+    15: optional i64 cache_write_bytes
 }
 
 struct TReportWorkloadRuntimeStatusParams {

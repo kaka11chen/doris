@@ -671,6 +671,26 @@ public:
 
     void set_id_file_map();
 
+    // Cache metrics for WARM UP SELECT
+    void update_datacache_read_metrics(int64_t bytes, int64_t time_us) {
+        _num_datacache_read_bytes.fetch_add(bytes);
+        _num_datacache_read_time_us.fetch_add(time_us);
+        _num_datacache_read_count.fetch_add(1);
+    }
+
+    void update_datacache_write_metrics(int64_t bytes, int64_t time_us) {
+        _num_datacache_write_bytes.fetch_add(bytes);
+        _num_datacache_write_time_us.fetch_add(time_us);
+        _num_datacache_write_count.fetch_add(1);
+    }
+
+    int64_t get_datacache_read_bytes() const { return _num_datacache_read_bytes.load(); }
+    int64_t get_datacache_write_bytes() const { return _num_datacache_write_bytes.load(); }
+    int64_t get_datacache_read_time_us() const { return _num_datacache_read_time_us.load(); }
+    int64_t get_datacache_write_time_us() const { return _num_datacache_write_time_us.load(); }
+    int64_t get_datacache_read_count() const { return _num_datacache_read_count.load(); }
+    int64_t get_datacache_write_count() const { return _num_datacache_write_count.load(); }
+
 private:
     Status create_error_log_file();
 
@@ -800,6 +820,14 @@ private:
 
     // used for encoding the global lazy materialize
     std::shared_ptr<IdFileMap> _id_file_map = nullptr;
+
+    // Cache metrics for WARM UP SELECT
+    std::atomic<int64_t> _num_datacache_read_bytes {0};
+    std::atomic<int64_t> _num_datacache_write_bytes {0};
+    std::atomic<int64_t> _num_datacache_read_time_us {0};
+    std::atomic<int64_t> _num_datacache_write_time_us {0};
+    std::atomic<int64_t> _num_datacache_read_count {0};
+    std::atomic<int64_t> _num_datacache_write_count {0};
 };
 
 #define RETURN_IF_CANCELLED(state)               \

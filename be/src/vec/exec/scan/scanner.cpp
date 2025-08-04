@@ -260,4 +260,26 @@ void Scanner::update_scan_cpu_timer() {
     }
 }
 
+void Scanner::record_cache_read(int64_t bytes, int64_t time_us) {
+    _warm_up_cache_counter.cache_read_bytes += bytes;
+    _warm_up_cache_counter.cache_read_time_us += time_us;
+    _warm_up_cache_counter.cache_read_count++;
+
+    // Update RuntimeState metrics for aggregation
+    if (_state) {
+        _state->update_datacache_read_metrics(bytes, time_us);
+    }
+}
+
+void Scanner::record_cache_write(int64_t bytes, int64_t time_us) {
+    _warm_up_cache_counter.cache_write_bytes += bytes;
+    _warm_up_cache_counter.cache_write_time_us += time_us;
+    _warm_up_cache_counter.cache_write_count++;
+
+    // Update RuntimeState metrics for aggregation
+    if (_state) {
+        _state->update_datacache_write_metrics(bytes, time_us);
+    }
+}
+
 } // namespace doris::vectorized

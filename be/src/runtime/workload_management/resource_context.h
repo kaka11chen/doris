@@ -33,6 +33,7 @@
 namespace doris {
 #include "common/compile_check_begin.h"
 
+class RuntimeState;
 // Every task should have its own resource context. And BE may adjust the resource
 // context during running.
 // ResourceContext contains many contexts or controller, the task could implements their
@@ -84,6 +85,10 @@ public:
 
     void to_pb_query_statistics(PQueryStatistics* statistics) const;
     void to_thrift_query_statistics(TQueryStatistics* statistics) const;
+    // Overload that includes cache metrics from RuntimeState
+    void to_thrift_query_statistics(TQueryStatistics* statistics, RuntimeState* state) const;
+    // Update cache metrics from RuntimeState for WARM UP SELECT operations
+    void update_cache_metrics_from_runtime_state(RuntimeState* state);
 
     std::string debug_string() { return resource_profile_.get()->pretty_print(); }
     void refresh_resource_profile() {
@@ -112,6 +117,10 @@ private:
 
     WorkloadGroupPtr _workload_group = nullptr;
     MultiVersion<RuntimeProfile> resource_profile_;
+
+    // Cache metrics for WARM UP SELECT operations
+    int64_t _cache_read_bytes = 0;
+    int64_t _cache_write_bytes = 0;
 };
 
 #include "common/compile_check_end.h"

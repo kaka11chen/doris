@@ -45,6 +45,7 @@ import org.apache.doris.nereids.stats.StatsErrorEstimator;
 import org.apache.doris.nereids.trees.plans.distribute.DistributedPlan;
 import org.apache.doris.nereids.trees.plans.distribute.FragmentIdMapping;
 import org.apache.doris.nereids.trees.plans.physical.TopnFilter;
+import org.apache.doris.planner.BlackholeSink;
 import org.apache.doris.planner.DataPartition;
 import org.apache.doris.planner.DataSink;
 import org.apache.doris.planner.DataStreamSink;
@@ -723,49 +724,56 @@ public class Coordinator implements CoordInterface {
         FragmentExecParams topParams = fragmentExecParamsMap.get(topId);
         DataSink topDataSink = topParams.fragment.getSink();
         this.timeoutDeadline = System.currentTimeMillis() + queryOptions.getExecutionTimeout() * 1000L;
-        if (topDataSink instanceof ResultSink || topDataSink instanceof ResultFileSink) {
-            Boolean enableParallelResultSink = false;
-            if (topDataSink instanceof ResultSink) {
-                enableParallelResultSink = queryOptions.isEnableParallelResultSink();
+        if (topDataSink instanceof ResultSink || topDataSink instanceof ResultFileSink || topDataSink instanceof BlackholeSink) {
+            // For BlackholeSink (warmup select), don't create receivers as we discard the data
+            if (topDataSink instanceof BlackholeSink) {
+                LOG.info("dispatch blackhole sink of warmup query {} to {}", DebugUtil.printId(queryId),
+                        topParams.instanceExecParams.get(0).host);
+                // No receivers needed for BlackholeSink - data is discarded
             } else {
-                enableParallelResultSink = queryOptions.isEnableParallelOutfile();
-            }
-
-            Set<TNetworkAddress> addrs = new HashSet<>();
-            for (FInstanceExecParam param : topParams.instanceExecParams) {
-                if (addrs.contains(param.host)) {
-                    continue;
-                }
-                addrs.add(param.host);
-                if (context.isReturnResultFromLocal()) {
-                    receivers.add(new ResultReceiver(queryId, param.instanceId, addressToBackendID.get(param.host),
-                            toBrpcHost(param.host), this.timeoutDeadline,
-                            context.getSessionVariable().getMaxMsgSizeOfResultReceiver(), enableParallelResultSink));
+                Boolean enableParallelResultSink = false;
+                if (topDataSink instanceof ResultSink) {
+                    enableParallelResultSink = queryOptions.isEnableParallelResultSink();
                 } else {
-                    Preconditions.checkState(context.getConnectType().equals(ConnectType.ARROW_FLIGHT_SQL));
-                    TUniqueId finstId;
-                    if (enableParallelResultSink) {
-                        finstId = queryId;
-                    } else {
-                        finstId = topParams.instanceExecParams.get(0).instanceId;
-                    }
-                    context.addFlightSqlEndpointsLocation(new FlightSqlEndpointsLocation(finstId,
-                            toArrowFlightHost(param.host), toBrpcHost(param.host), fragments.get(0).getOutputExprs()));
+                    enableParallelResultSink = queryOptions.isEnableParallelOutfile();
                 }
-            }
-            receiverConsumer = new ResultReceiverConsumer(receivers, timeoutDeadline);
 
-            LOG.info("dispatch result sink of query {} to {}", DebugUtil.printId(queryId),
-                    topParams.instanceExecParams.get(0).host);
+                Set<TNetworkAddress> addrs = new HashSet<>();
+                for (FInstanceExecParam param : topParams.instanceExecParams) {
+                    if (addrs.contains(param.host)) {
+                        continue;
+                    }
+                    addrs.add(param.host);
+                    if (context.isReturnResultFromLocal()) {
+                        receivers.add(new ResultReceiver(queryId, param.instanceId, addressToBackendID.get(param.host),
+                                toBrpcHost(param.host), this.timeoutDeadline,
+                                context.getSessionVariable().getMaxMsgSizeOfResultReceiver(), enableParallelResultSink));
+                    } else {
+                        Preconditions.checkState(context.getConnectType().equals(ConnectType.ARROW_FLIGHT_SQL));
+                        TUniqueId finstId;
+                        if (enableParallelResultSink) {
+                            finstId = queryId;
+                        } else {
+                            finstId = topParams.instanceExecParams.get(0).instanceId;
+                        }
+                        context.addFlightSqlEndpointsLocation(new FlightSqlEndpointsLocation(finstId,
+                                toArrowFlightHost(param.host), toBrpcHost(param.host), fragments.get(0).getOutputExprs()));
+                    }
+                }
+                receiverConsumer = new ResultReceiverConsumer(receivers, timeoutDeadline);
 
-            if (topDataSink instanceof ResultFileSink
-                    && ((ResultFileSink) topDataSink).getStorageType() == StorageBackend.StorageType.BROKER) {
-                // set the broker address for OUTFILE sink
-                ResultFileSink topResultFileSink = (ResultFileSink) topDataSink;
-                FsBroker broker = Env.getCurrentEnv().getBrokerMgr()
-                        .getBroker(topResultFileSink.getBrokerName(),
-                                topParams.instanceExecParams.get(0).host.getHostname());
-                topResultFileSink.setBrokerAddr(broker.host, broker.port);
+                LOG.info("dispatch result sink of query {} to {}", DebugUtil.printId(queryId),
+                        topParams.instanceExecParams.get(0).host);
+
+                if (topDataSink instanceof ResultFileSink
+                        && ((ResultFileSink) topDataSink).getStorageType() == StorageBackend.StorageType.BROKER) {
+                    // set the broker address for OUTFILE sink
+                    ResultFileSink topResultFileSink = (ResultFileSink) topDataSink;
+                    FsBroker broker = Env.getCurrentEnv().getBrokerMgr()
+                            .getBroker(topResultFileSink.getBrokerName(),
+                                    topParams.instanceExecParams.get(0).host.getHostname());
+                    topResultFileSink.setBrokerAddr(broker.host, broker.port);
+                }
             }
         } else {
             // This is a load process.
@@ -1157,7 +1165,20 @@ public class Coordinator implements CoordInterface {
     @Override
     public RowBatch getNext() throws Exception {
         if (receivers.isEmpty()) {
-            throw new UserException("There is no receiver.");
+            // For BlackholeSink (warmup select), we don't have receivers since data is discarded
+            // Check if this is a BlackholeSink case by looking at the top fragment's sink
+            PlanFragmentId topId = fragments.get(0).getFragmentId();
+            FragmentExecParams topParams = fragmentExecParamsMap.get(topId);
+            DataSink topDataSink = topParams.fragment.getSink();
+            
+            if (topDataSink instanceof BlackholeSink) {
+                // For BlackholeSink, return an empty result set to indicate completion
+                RowBatch emptyBatch = new RowBatch();
+                emptyBatch.setEos(true);
+                return emptyBatch;
+            } else {
+                throw new UserException("There is no receiver.");
+            }
         }
 
         Status status = new Status();
