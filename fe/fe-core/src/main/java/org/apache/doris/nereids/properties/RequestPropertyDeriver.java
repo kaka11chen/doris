@@ -186,7 +186,9 @@ public class RequestPropertyDeriver extends PlanVisitor<Void, PlanContext> {
 
     @Override
     public Void visitPhysicalBlackholeSink(PhysicalBlackholeSink<? extends Plan> sink, PlanContext context) {
-        addRequestPropertyToChildren(PhysicalProperties.GATHER);
+        // addRequestPropertyToChildren(PhysicalProperties.GATHER);
+
+        addRequestPropertyToChildren(PhysicalProperties.ANY);
         return null;
     }
 

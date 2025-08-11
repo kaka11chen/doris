@@ -45,15 +45,15 @@ BlackholeSinkOperatorX::BlackholeSinkOperatorX(
 Status BlackholeSinkOperatorX::prepare(RuntimeState* state) {
     // BlackholeSink uses result buffer to send cache metrics to FE
     // Similar to VArrowFlightResultWriter pattern
-    // if (state->query_options().enable_parallel_result_sink) {
-    //     VLOG_DEBUG << "create sender in prepare with query id " << state->query_id();
-    //     std::shared_ptr<ResultBlockBufferBase> sender_base = nullptr;
-    //     RETURN_IF_ERROR(state->exec_env()->result_mgr()->create_sender(
-    //             state->query_id(), 4096, &sender_base, state,
-    //             false, nullptr));
-    //     _sender = sender_base;
-    //     LOG(INFO) << "Created shared sender in prepare for blackhole sink, query_id: " << print_id(state->query_id());
-    // }
+    if (state->query_options().enable_parallel_result_sink) {
+        VLOG_DEBUG << "create sender in prepare with query id " << state->query_id();
+        std::shared_ptr<ResultBlockBufferBase> sender_base = nullptr;
+        RETURN_IF_ERROR(state->exec_env()->result_mgr()->create_sender(
+                state->query_id(), 4096, &sender_base, state,
+                false, nullptr));
+        _sender = sender_base;
+        LOG(INFO) << "Created shared sender in prepare for blackhole sink, query_id: " << print_id(state->query_id());
+    }
     return Status::OK();
 }
 
@@ -84,11 +84,13 @@ Status BlackholeSinkOperatorX::sink(RuntimeState* state, vectorized::Block* bloc
         // Send cache metrics batch to FE for WARM UP SELECT results
         RETURN_IF_ERROR(_send_cache_metrics_batch(state, local_state));
 
-        // LOG(INFO) << "BlackholeSink completed processing. "
-        //            << "Rows processed: " << local_state._rows_processed
-        //            << ", Bytes processed: " << local_state._bytes_processed
-        //            << ", Cache read bytes: " << local_state._cache_read_bytes
-        //            << ", Cache write bytes: " << local_state._cache_write_bytes;
+        LOG(INFO) << "BlackholeSink completed processing. "
+                  << "Rows processed: " << local_state._rows_processed
+                  << ", Bytes processed: " << local_state._bytes_processed
+                  << ", Scan Rows: " << local_state._scan_rows
+                  << ", Scan Bytes: " << local_state._scan_bytes
+                  << ", Scan Bytes from Local Storage: " << local_state._scan_bytes_from_local_storage
+                  << ", Scan Bytes from Remote Storage: " << local_state._scan_bytes_from_remote_storage;
     }
 
     return Status::OK();
@@ -170,15 +172,16 @@ Status BlackholeSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo& in
     _wait_for_dependency_timer = ADD_TIMER_WITH_LEVEL(custom_profile(), timer_name, 1);
     auto fragment_instance_id = state->fragment_instance_id();
 
-    // if (state->query_options().enable_parallel_result_sink) {
-    //     _sender = _parent->cast<BlackholeSinkOperatorX>()._sender;
+    if (state->query_options().enable_parallel_result_sink) {
+         _sender = _parent->cast<BlackholeSinkOperatorX>()._sender;
     //     LOG(INFO) << "Using shared sender from operator for blackhole sink, query_id: " << print_id(state->query_id())
     //               << ", finst_id: " << print_id(fragment_instance_id);
-    // } else {
-    // For non-parallel result sink
-    VLOG_DEBUG << "create sender in INIT with instance id " << fragment_instance_id;
-    RETURN_IF_ERROR(state->exec_env()->result_mgr()->create_sender(
-            fragment_instance_id, 4096, &_sender, state, false, nullptr));
+    } else {
+        // For non-parallel result sink
+        VLOG_DEBUG << "create sender in INIT with instance id " << fragment_instance_id;
+        RETURN_IF_ERROR(state->exec_env()->result_mgr()->create_sender(
+                fragment_instance_id, 4096, &_sender, state, false, nullptr));
+    }
     // }
     // For fake shared state, _dependency is expected to be null
     // We need to create a fake dependency to register the fragment instance ID
@@ -215,11 +218,13 @@ Status BlackholeSinkLocalState::close(RuntimeState* state, Status exec_status) {
     // state->update_datacache_read_metrics(_cache_read_bytes, 0);
     // state->update_datacache_write_metrics(_cache_write_bytes, 0);
 
-    // LOG(INFO) << "BlackholeSinkLocalState closing. "
-    //           << "Total rows processed: " << _rows_processed
-    //           << ", Total bytes processed: " << _bytes_processed
-    //           << ", Cache read bytes: " << _cache_read_bytes
-    //           << ", Cache write bytes: " << _cache_write_bytes;
+    LOG(INFO) << "BlackholeSinkLocalState closing. "
+              << "Total rows processed: " << _rows_processed
+              << ", Total bytes processed: " << _bytes_processed
+              << ", Scan Rows: " << _scan_rows
+              << ", Scan Bytes: " << _scan_bytes
+              << ", Scan Bytes from Local Storage: " << _scan_bytes_from_local_storage
+              << ", Scan Bytes from Remote Storage: " << _scan_bytes_from_remote_storage;
 
     // Close the result buffer properly (similar to ResultSinkLocalState::close)
     if (_sender) {
@@ -239,10 +244,13 @@ Status BlackholeSinkLocalState::close(RuntimeState* state, Status exec_status) {
 }
 
 Status BlackholeSinkOperatorX::close(RuntimeState* state) {
-    // LOG(INFO) << "BlackholeSink completed. Processed rows: " << local_state._rows_processed
-    //           << ", bytes: " << local_state._bytes_processed
-    //           << ", cache read: " << local_state._cache_read_bytes
-    //           << ", cache write: " << local_state._cache_write_bytes;
+    auto& local_state = get_local_state(state);
+    LOG(INFO) << "BlackholeSink completed. Processed rows: " << local_state._rows_processed
+              << ", bytes: " << local_state._bytes_processed
+              << ", scan rows: " << local_state._scan_rows
+              << ", scan bytes: " << local_state._scan_bytes
+              << ", scan bytes from local storage: " << local_state._scan_bytes_from_local_storage
+              << ", scan bytes from remote storage: " << local_state._scan_bytes_from_remote_storage;
 
     return Status::OK();
 }
@@ -277,12 +285,7 @@ Status BlackholeSinkOperatorX::_send_cache_metrics_batch(RuntimeState* state,
         return Status::OK();
     }
 
-    // The cache metrics result include:
-    // | RowsProcessed    | Bigint  |
-    // | BytesProcessed   | Bigint  |
-    // | CacheReadBytes   | Bigint  |
-    // | CacheWriteBytes  | Bigint  |
-    // Use MysqlRowBuffer to build MySQL protocol compliant row data
+
     MysqlRowBuffer<> row_buffer;
 
     // Push values for each column

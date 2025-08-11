@@ -76,7 +76,7 @@ public class QueryProcessor extends AbstractJobProcessor {
             enableParallelResultSink = coordinatorContext.queryOptions.isEnableParallelResultSink();
         } else if (topDataSink instanceof BlackholeSink) {
             // TODO coordinatorContext.queryOptions.isEnableParallelBlackHoleSink();
-            enableParallelResultSink = false;
+            enableParallelResultSink = true;
         } else {
             enableParallelResultSink = coordinatorContext.queryOptions.isEnableParallelOutfile();
         }
