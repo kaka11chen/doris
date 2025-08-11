@@ -20,6 +20,7 @@
 #include <gen_cpp/PlanNodes_types.h>
 #include <gen_cpp/Types_types.h>
 #include <stdint.h>
+
 #include <memory>
 
 #include "operator.h"
@@ -72,7 +73,7 @@ public:
 
 private:
     friend class BlackholeSinkOperatorX;
-    
+
     // Result buffer for sending cache metrics to FE
     std::shared_ptr<ResultBlockBufferBase> _sender = nullptr;
 };
@@ -81,9 +82,8 @@ class BlackholeSinkOperatorX final : public DataSinkOperatorX<BlackholeSinkLocal
 public:
     using Base = DataSinkOperatorX<BlackholeSinkLocalState>;
 
-    BlackholeSinkOperatorX(int operator_id, const int dest_id, 
-                          const TDataStreamSink& sink,
-                          const std::vector<TPlanFragmentDestination>& destinations);
+    BlackholeSinkOperatorX(int operator_id, const int dest_id, const TDataStreamSink& sink,
+                           const std::vector<TPlanFragmentDestination>& destinations);
     Status prepare(RuntimeState* state) override;
     Status init(const TDataSink& tsink) override;
 
@@ -92,7 +92,7 @@ public:
      * This allows the query execution to proceed normally while maintaining connection to FE.
      */
     Status sink(RuntimeState* state, vectorized::Block* block, bool eos) override;
-    
+
     Status close(RuntimeState* state) override;
 
 private:
@@ -123,7 +123,7 @@ private:
      */
     Status _send_cache_metrics_batch(RuntimeState* state, BlackholeSinkLocalState& local_state);
 
-    // Store sink configuration 
+    // Store sink configuration
     TDataStreamSink _t_data_stream_sink;
     std::vector<TPlanFragmentDestination> _destinations;
     std::shared_ptr<ResultBlockBufferBase> _sender = nullptr;

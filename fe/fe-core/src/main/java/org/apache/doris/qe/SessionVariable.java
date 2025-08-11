@@ -29,6 +29,7 @@ import org.apache.doris.common.io.Writable;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.common.util.Util;
 import org.apache.doris.nereids.StatementContext;
+import org.apache.doris.nereids.analyzer.UnboundBlackholeSink;
 import org.apache.doris.nereids.analyzer.UnboundResultSink;
 import org.apache.doris.nereids.glue.LogicalPlanAdapter;
 import org.apache.doris.nereids.metrics.Event;
@@ -39,6 +40,7 @@ import org.apache.doris.nereids.rules.expression.ExpressionRuleType;
 import org.apache.doris.nereids.trees.plans.commands.insert.InsertIntoTableCommand;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFileSink;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
+import org.apache.doris.planner.BlackholeSink;
 import org.apache.doris.planner.GroupCommitBlockSink;
 import org.apache.doris.qe.VariableMgr.VarAttr;
 import org.apache.doris.thrift.TGroupCommitMode;
@@ -3922,7 +3924,8 @@ public class SessionVariable implements Serializable, Writable {
             // TODO: support other sink
             if (!(logicalPlan instanceof UnboundResultSink
                     || logicalPlan instanceof LogicalFileSink
-                    || logicalPlan instanceof InsertIntoTableCommand)) {
+                    || logicalPlan instanceof InsertIntoTableCommand
+                    || logicalPlan instanceof UnboundBlackholeSink)) {
                 return false;
             }
         }

@@ -17,6 +17,7 @@
 
 package org.apache.doris.qe;
 
+import org.apache.doris.analysis.BlackHoleClause;
 import org.apache.doris.analysis.CreateRoutineLoadStmt;
 import org.apache.doris.analysis.DdlStmt;
 import org.apache.doris.analysis.ExportStmt;
@@ -1479,6 +1480,7 @@ public class StmtExecutor {
             channel = context.getMysqlChannel();
         }
         boolean isOutfileQuery = queryStmt.hasOutFileClause();
+        boolean isBlackHoleQuery = queryStmt.hasBlackHoleClause();
         if (parsedStmt instanceof LogicalPlanAdapter) {
             LogicalPlanAdapter logicalPlanAdapter = (LogicalPlanAdapter) parsedStmt;
             LogicalPlan logicalPlan = logicalPlanAdapter.getLogicalPlan();
@@ -1495,7 +1497,7 @@ public class StmtExecutor {
         // TODO support arrow flight sql
         // NOTE: If you want to add another condition about SessionVariable, please consider whether
         // add to CacheAnalyzer.commonCacheCondition
-        if (channel != null && !isOutfileQuery && CacheAnalyzer.canUseCache(context.getSessionVariable())
+        if (channel != null && !isOutfileQuery && !isBlackHoleQuery && CacheAnalyzer.canUseCache(context.getSessionVariable())
                 && parsedStmt.getOrigStmt() != null && parsedStmt.getOrigStmt().originStmt != null) {
             if (queryStmt instanceof LogicalPlanAdapter) {
                 handleCacheStmt(cacheAnalyzer, channel);
@@ -1520,6 +1522,7 @@ public class StmtExecutor {
         // 2. If this is a query, send the result expr fields first, and send result data back to client.
         RowBatch batch;
         CoordInterface coordBase = null;
+        boolean isBlackHoleClause = queryStmt.hasBlackHoleClause();
         if (statementContext.isShortCircuitQuery()) {
             ShortCircuitQueryContext shortCircuitQueryContext =
                         statementContext.getShortCircuitQueryContext() != null
@@ -1572,7 +1575,7 @@ public class StmtExecutor {
 
                 // for outfile query, there will be only one empty batch send back with eos flag
                 // call `copyRowBatch()` first, because batch.getBatch() may be null, if result set is empty
-                if (cacheAnalyzer != null && !isOutfileQuery && !isDryRun) {
+                if (cacheAnalyzer != null && !isOutfileQuery && !isBlackHoleClause && !isDryRun) {
                     cacheAnalyzer.copyRowBatch(batch);
                 }
                 if (batch.getBatch() != null) {
@@ -1582,14 +1585,16 @@ public class StmtExecutor {
                     // will be recognized as a success result
                     // so We need to send fields after first batch arrived
                     if (!isSendFields) {
-                        if (!isOutfileQuery) {
-                            sendFields(queryStmt.getColLabels(), queryStmt.getFieldInfos(),
-                                    getReturnTypes(queryStmt));
-                        } else {
+                        if (isOutfileQuery) {
                             if (!Strings.isNullOrEmpty(queryStmt.getOutFileClause().getSuccessFileName())) {
                                 outfileWriteSuccess(queryStmt.getOutFileClause());
                             }
                             sendFields(OutFileClause.RESULT_COL_NAMES, OutFileClause.RESULT_COL_TYPES);
+                        } else if (isBlackHoleClause) {
+                            sendFields(BlackHoleClause.RESULT_COL_NAMES, BlackHoleClause.RESULT_COL_TYPES);
+                        } else {
+                            sendFields(queryStmt.getColLabels(), queryStmt.getFieldInfos(),
+                                    getReturnTypes(queryStmt));
                         }
                         isSendFields = true;
                     }
@@ -1620,7 +1625,11 @@ public class StmtExecutor {
                 }
             }
             if (!isSendFields) {
-                if (!isOutfileQuery) {
+                if (isOutfileQuery) {
+                    sendFields(OutFileClause.RESULT_COL_NAMES, OutFileClause.RESULT_COL_TYPES);
+                } else if (isBlackHoleClause) {
+                    sendFields(BlackHoleClause.RESULT_COL_NAMES, BlackHoleClause.RESULT_COL_TYPES);
+                } else {
                     if (ConnectContext.get() != null && isDryRun) {
                         // Return a one row one column result set, with the real result number
                         long rows = 0;
@@ -1638,19 +1647,17 @@ public class StmtExecutor {
                         sendFields(queryStmt.getColLabels(), queryStmt.getFieldInfos(),
                                 getReturnTypes(queryStmt));
                     }
-                } else {
-                    sendFields(OutFileClause.RESULT_COL_NAMES, OutFileClause.RESULT_COL_TYPES);
                 }
             }
 
             statisticsForAuditLog = batch.getQueryStatistics() == null ? null : batch.getQueryStatistics().toBuilder();
-            
+
             // Check if this is a BlackholeSink (WARM UP SELECT) query and handle result reporting
-            if (isBlackholeSinkQuery()) {
-                handleBlackholeSinkResult(coordBase, batch);
-            } else {
-                context.getState().setEof();
-            }
+            // if (queryStmt.hasBlackHoleClause()) {
+            //     handleBlackholeSinkResult(coordBase, batch);
+            // } else {
+            context.getState().setEof();
+            // }
             profile.getSummaryProfile().setQueryFetchResultFinishTime();
         } catch (Exception e) {
             // notify all be cancel running fragment
@@ -2501,18 +2508,19 @@ public class StmtExecutor {
     /**
      * Check if the current query is a BlackholeSink (WARM UP SELECT) query
      */
-    private boolean isBlackholeSinkQuery() {
-        if (planner instanceof NereidsPlanner) {
-            NereidsPlanner nereidsPlanner = (NereidsPlanner) planner;
-            if (nereidsPlanner.getDistributedPlans() != null && !nereidsPlanner.getDistributedPlans().isEmpty()) {
-                // Get the first distributed plan and extract the fragment from its job
-                DistributedPlan firstPlan = nereidsPlanner.getDistributedPlans().values().iterator().next();
-                PlanFragment topFragment = firstPlan.getFragmentJob().getFragment();
-                return topFragment.getSink() instanceof org.apache.doris.planner.BlackholeSink;
-            }
-        }
-        return false;
-    }
+    // private boolean isBlackholeSinkQuery() {
+    //     if (planner instanceof NereidsPlanner) {
+    //         NereidsPlanner nereidsPlanner = (NereidsPlanner) planner;
+    //         if (nereidsPlanner.getDistributedPlans() != null && !nereidsPlanner.getDistributedPlans().isEmpty()) {
+    //             // Get the first distributed plan and extract the fragment from its job
+    //             DistributedPlan firstPlan = nereidsPlanner.getDistributedPlans().values().iterator().next();
+    //             PlanFragment topFragment = firstPlan.getFragmentJob().getFragment();
+    //             return topFragment.getSink() instanceof org.apache.doris.planner.BlackholeSink;
+    //         }
+    //     }
+    //     return false;
+    //
+    // }
 
     /**
      * Handle result reporting for BlackholeSink (WARM UP SELECT) queries
@@ -2534,6 +2542,8 @@ public class StmtExecutor {
                 // We would need to extend the proto definition to include:
                 // - cache_read_bytes
                 // - cache_write_bytes
+                cacheReadBytes = batch.getQueryStatistics().getScanBytesFromRemoteStorage();
+                cacheWriteBytes = batch.getQueryStatistics().getScanBytesFromLocalStorage();
             }
 
             // If we didn't get rows from statistics, try to get from coordinator
@@ -2551,9 +2561,18 @@ public class StmtExecutor {
             infoMessage.append(",\"cacheWriteBytes\":").append(cacheWriteBytes);
             infoMessage.append("}");
 
+            System.out.println(infoMessage);
+
             // Set OK status with prewarm information
             context.getState().setOk(prewarmedRows, 0, infoMessage.toString());
-            
+
+            // // set insert result in connection context,
+            // // so that user can use `show insert result` to get info of the last insert operation.
+            // context.setOrUpdateInsertResult(txnId, labelName, database.getFullName(), table.getName(),
+            //         txnStatus, loadedRows, filteredRows);
+            // update it, so that user can get loaded rows in fe.audit.log
+            context.updateReturnRows((int)prewarmedRows);
+
             LOG.info("WARM UP SELECT completed. Rows: {}, Bytes: {}, CacheRead: {}, CacheWrite: {}", 
                     prewarmedRows, prewarmedBytes, cacheReadBytes, cacheWriteBytes);
 

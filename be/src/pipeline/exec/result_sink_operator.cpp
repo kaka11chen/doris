@@ -66,7 +66,7 @@ Status ResultSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo& info)
                 p._sink_type == TResultSinkType::ARROW_FLIGHT_PROTOCAL, arrow_schema));
     }
     _sender->set_dependency(fragment_instance_id, _dependency->shared_from_this());
-    
+
     return Status::OK();
 }
 

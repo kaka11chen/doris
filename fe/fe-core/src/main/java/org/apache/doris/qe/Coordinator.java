@@ -726,14 +726,16 @@ public class Coordinator implements CoordInterface {
         this.timeoutDeadline = System.currentTimeMillis() + queryOptions.getExecutionTimeout() * 1000L;
         if (topDataSink instanceof ResultSink || topDataSink instanceof ResultFileSink || topDataSink instanceof BlackholeSink) {
             // For BlackholeSink (warmup select), don't create receivers as we discard the data
-            if (topDataSink instanceof BlackholeSink) {
-                LOG.info("dispatch blackhole sink of warmup query {} to {}", DebugUtil.printId(queryId),
-                        topParams.instanceExecParams.get(0).host);
-                // No receivers needed for BlackholeSink - data is discarded
-            } else {
+            // if (topDataSink instanceof BlackholeSink) {
+            //     LOG.info("dispatch blackhole sink of warmup query {} to {}", DebugUtil.printId(queryId),
+            //             topParams.instanceExecParams.get(0).host);
+            //     // No receivers needed for BlackholeSink - data is discarded
+            // } else {
                 Boolean enableParallelResultSink = false;
                 if (topDataSink instanceof ResultSink) {
                     enableParallelResultSink = queryOptions.isEnableParallelResultSink();
+                } else if (topDataSink instanceof BlackholeSink) {
+                    enableParallelResultSink = true;
                 } else {
                     enableParallelResultSink = queryOptions.isEnableParallelOutfile();
                 }
@@ -774,7 +776,7 @@ public class Coordinator implements CoordInterface {
                                     topParams.instanceExecParams.get(0).host.getHostname());
                     topResultFileSink.setBrokerAddr(broker.host, broker.port);
                 }
-            }
+            // }
         } else {
             // This is a load process.
             this.queryOptions.setIsReportSuccess(true);
@@ -1165,20 +1167,7 @@ public class Coordinator implements CoordInterface {
     @Override
     public RowBatch getNext() throws Exception {
         if (receivers.isEmpty()) {
-            // For BlackholeSink (warmup select), we don't have receivers since data is discarded
-            // Check if this is a BlackholeSink case by looking at the top fragment's sink
-            PlanFragmentId topId = fragments.get(0).getFragmentId();
-            FragmentExecParams topParams = fragmentExecParamsMap.get(topId);
-            DataSink topDataSink = topParams.fragment.getSink();
-            
-            if (topDataSink instanceof BlackholeSink) {
-                // For BlackholeSink, return an empty result set to indicate completion
-                RowBatch emptyBatch = new RowBatch();
-                emptyBatch.setEos(true);
-                return emptyBatch;
-            } else {
-                throw new UserException("There is no receiver.");
-            }
+            throw new UserException("There is no receiver.");
         }
 
         Status status = new Status();

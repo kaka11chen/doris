@@ -530,25 +530,25 @@ Status RuntimeQueryStatisticsMgr::get_query_statistics(const std::string& query_
                                                        RuntimeState* state) {
     // First get basic query statistics
     RETURN_IF_ERROR(get_query_statistics(query_id, query_stats));
-    
+
     // If RuntimeState is provided, add cache metrics (for BlackholeSink queries)
     if (state != nullptr) {
         // Add cache metrics from RuntimeState
         int64_t cache_read_bytes = state->get_datacache_read_bytes();
         int64_t cache_write_bytes = state->get_datacache_write_bytes();
-        
+
         query_stats->__set_cache_read_bytes(cache_read_bytes);
         query_stats->__set_cache_write_bytes(cache_write_bytes);
-        
+
         // Set isset flags
         query_stats->__isset.cache_read_bytes = true;
         query_stats->__isset.cache_write_bytes = true;
-        
+
         VLOG_DEBUG << "Added cache metrics to query statistics: "
                    << "cache_read_bytes=" << cache_read_bytes
                    << ", cache_write_bytes=" << cache_write_bytes;
     }
-    
+
     return Status::OK();
 }
 

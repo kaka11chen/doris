@@ -48,9 +48,6 @@
 #include "pipeline/exec/assert_num_rows_operator.h"
 #include "pipeline/exec/blackhole_sink_operator.h"
 #include "pipeline/exec/cache_sink_operator.h"
-#include "runtime/result_block_buffer.h"
-#include "runtime/result_buffer_mgr.h"
-#include "vec/sink/vmysql_result_writer.h"
 #include "pipeline/exec/cache_source_operator.h"
 #include "pipeline/exec/datagen_operator.h"
 #include "pipeline/exec/dict_sink_operator.h"
@@ -109,6 +106,8 @@
 #include "pipeline_task.h"
 #include "runtime/exec_env.h"
 #include "runtime/fragment_mgr.h"
+#include "runtime/result_block_buffer.h"
+#include "runtime/result_buffer_mgr.h"
 #include "runtime/runtime_state.h"
 #include "runtime/stream_load/new_load_stream_mgr.h"
 #include "runtime/stream_load/stream_load_context.h"
@@ -122,6 +121,7 @@
 #include "vec/common/sort/heap_sorter.h"
 #include "vec/common/sort/topn_sorter.h"
 #include "vec/runtime/vdata_stream_mgr.h"
+#include "vec/sink/vmysql_result_writer.h"
 #include "vec/spill/spill_stream.h"
 
 namespace doris::pipeline {
@@ -1179,7 +1179,8 @@ Status PipelineFragmentContext::_create_data_sink(ObjectPool* pool, const TDataS
         TDataStreamSink empty_sink;
         std::vector<TPlanFragmentDestination> empty_destinations;
 
-        _sink.reset(new BlackholeSinkOperatorX(next_sink_operator_id(), 0, empty_sink, empty_destinations));
+        _sink.reset(new BlackholeSinkOperatorX(next_sink_operator_id(), 0, empty_sink,
+                                               empty_destinations));
         break;
     }
     default:
@@ -1837,7 +1838,7 @@ void PipelineFragmentContext::_close_fragment_instance() {
             // This ensures that WARM UP SELECT operations report cache read/write bytes
             resource_ctx->update_cache_metrics_from_runtime_state(_runtime_state.get());
             LOG(INFO) << "Updated cache metrics for WARM UP SELECT operation. "
-                       << "Query: " << print_id(_query_id) << ", Fragment: " << _fragment_id;
+                      << "Query: " << print_id(_query_id) << ", Fragment: " << _fragment_id;
         }
     }
 
