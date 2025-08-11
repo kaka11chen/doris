@@ -48,6 +48,9 @@
 #include "pipeline/exec/assert_num_rows_operator.h"
 #include "pipeline/exec/blackhole_sink_operator.h"
 #include "pipeline/exec/cache_sink_operator.h"
+#include "runtime/result_block_buffer.h"
+#include "runtime/result_buffer_mgr.h"
+#include "vec/sink/vmysql_result_writer.h"
 #include "pipeline/exec/cache_source_operator.h"
 #include "pipeline/exec/datagen_operator.h"
 #include "pipeline/exec/dict_sink_operator.h"
@@ -1172,7 +1175,11 @@ Status PipelineFragmentContext::_create_data_sink(ObjectPool* pool, const TDataS
             return Status::InternalError("Missing blackhole sink.");
         }
 
-        _sink.reset(new BlackholeSinkOperatorX(next_sink_operator_id(), next_sink_operator_id()));
+        // Create a minimal TDataStreamSink for blackhole sink
+        TDataStreamSink empty_sink;
+        std::vector<TPlanFragmentDestination> empty_destinations;
+
+        _sink.reset(new BlackholeSinkOperatorX(next_sink_operator_id(), 0, empty_sink, empty_destinations));
         break;
     }
     default:
@@ -1829,7 +1836,7 @@ void PipelineFragmentContext::_close_fragment_instance() {
             // Update the ResourceContext to include cache metrics from RuntimeState
             // This ensures that WARM UP SELECT operations report cache read/write bytes
             resource_ctx->update_cache_metrics_from_runtime_state(_runtime_state.get());
-            VLOG_DEBUG << "Updated cache metrics for WARM UP SELECT operation. "
+            LOG(INFO) << "Updated cache metrics for WARM UP SELECT operation. "
                        << "Query: " << print_id(_query_id) << ", Fragment: " << _fragment_id;
         }
     }

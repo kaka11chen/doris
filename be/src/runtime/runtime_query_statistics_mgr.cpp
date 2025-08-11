@@ -38,6 +38,7 @@
 #include "exec/schema_scanner/schema_scanner_helper.h"
 #include "runtime/client_cache.h"
 #include "runtime/exec_env.h"
+#include "runtime/runtime_state.h"
 #include "util/debug_util.h"
 #include "util/threadpool.h"
 #include "util/thrift_client.h"
@@ -525,16 +526,29 @@ Status RuntimeQueryStatisticsMgr::get_query_statistics(const std::string& query_
 }
 
 Status RuntimeQueryStatisticsMgr::get_query_statistics(const std::string& query_id,
-                                                       RuntimeState* runtime_state,
-                                                       TQueryStatistics* query_stats) {
-    std::shared_lock<std::shared_mutex> read_lock(_resource_contexts_map_lock);
-
-    auto resource_ctx = _resource_contexts_map.find(query_id);
-    if (resource_ctx == _resource_contexts_map.end()) {
-        return Status::InternalError("failed to find query with id {}", query_id);
+                                                       TQueryStatistics* query_stats,
+                                                       RuntimeState* state) {
+    // First get basic query statistics
+    RETURN_IF_ERROR(get_query_statistics(query_id, query_stats));
+    
+    // If RuntimeState is provided, add cache metrics (for BlackholeSink queries)
+    if (state != nullptr) {
+        // Add cache metrics from RuntimeState
+        int64_t cache_read_bytes = state->get_datacache_read_bytes();
+        int64_t cache_write_bytes = state->get_datacache_write_bytes();
+        
+        query_stats->__set_cache_read_bytes(cache_read_bytes);
+        query_stats->__set_cache_write_bytes(cache_write_bytes);
+        
+        // Set isset flags
+        query_stats->__isset.cache_read_bytes = true;
+        query_stats->__isset.cache_write_bytes = true;
+        
+        VLOG_DEBUG << "Added cache metrics to query statistics: "
+                   << "cache_read_bytes=" << cache_read_bytes
+                   << ", cache_write_bytes=" << cache_write_bytes;
     }
-
-    resource_ctx->second->to_thrift_query_statistics(runtime_state, query_stats);
+    
     return Status::OK();
 }
 

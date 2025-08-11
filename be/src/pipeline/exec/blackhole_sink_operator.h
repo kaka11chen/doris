@@ -18,11 +18,25 @@
 #pragma once
 
 #include <gen_cpp/PlanNodes_types.h>
+#include <gen_cpp/Types_types.h>
 #include <stdint.h>
+#include <memory>
 
 #include "operator.h"
+#include "runtime/result_block_buffer.h"
+#include "vec/core/block.h"
+#include "vec/sink/vmysql_result_writer.h"
 
 namespace doris {
+
+class TDataStreamSink;
+class TPlanFragmentDestination;
+class TDataSink;
+
+namespace vectorized {
+class Block;
+}
+
 namespace pipeline {
 
 // Forward declaration
@@ -44,8 +58,12 @@ public:
     // Cache metrics for WARM UP SELECT result reporting
     int64_t _rows_processed = 0;
     int64_t _bytes_processed = 0;
-    int64_t _cache_read_bytes = 0;
-    int64_t _cache_write_bytes = 0;
+    // int64_t _cache_read_bytes = 0;
+    // int64_t _cache_write_bytes = 0;
+    int64_t _scan_rows = 0;
+    int64_t _scan_bytes = 0;
+    int64_t _scan_bytes_from_local_storage = 0;
+    int64_t _scan_bytes_from_remote_storage = 0;
 
     RuntimeProfile::Counter* _rows_processed_timer = nullptr;
     RuntimeProfile::Counter* _bytes_processed_timer = nullptr;
@@ -54,21 +72,28 @@ public:
 
 private:
     friend class BlackholeSinkOperatorX;
+    
+    // Result buffer for sending cache metrics to FE
+    std::shared_ptr<ResultBlockBufferBase> _sender = nullptr;
 };
 
 class BlackholeSinkOperatorX final : public DataSinkOperatorX<BlackholeSinkLocalState> {
 public:
     using Base = DataSinkOperatorX<BlackholeSinkLocalState>;
 
-    BlackholeSinkOperatorX(int operator_id, const int dest_id);
+    BlackholeSinkOperatorX(int operator_id, const int dest_id, 
+                          const TDataStreamSink& sink,
+                          const std::vector<TPlanFragmentDestination>& destinations);
     Status prepare(RuntimeState* state) override;
+    Status init(const TDataSink& tsink) override;
 
     /**
-     * Core sink method - receives data blocks and discards them.
-     * This allows the query execution to proceed normally (reading from storage,
-     * populating cache, performing joins/aggregations) while discarding final results.
+     * Core sink method - receives data blocks and sends empty blocks to maintain stream.
+     * This allows the query execution to proceed normally while maintaining connection to FE.
      */
     Status sink(RuntimeState* state, vectorized::Block* block, bool eos) override;
+    
+    Status close(RuntimeState* state) override;
 
 private:
     friend class BlackholeSinkLocalState;
@@ -91,6 +116,17 @@ private:
      */
     void get_metrics(RuntimeState* state, int64_t& rows, int64_t& bytes, int64_t& cache_read_bytes,
                      int64_t& cache_write_bytes);
+
+    /**
+     * Send cache metrics as a result batch to FE
+     * This ensures FE receives the WARM UP SELECT results
+     */
+    Status _send_cache_metrics_batch(RuntimeState* state, BlackholeSinkLocalState& local_state);
+
+    // Store sink configuration 
+    TDataStreamSink _t_data_stream_sink;
+    std::vector<TPlanFragmentDestination> _destinations;
+    std::shared_ptr<ResultBlockBufferBase> _sender = nullptr;
 };
 
 } // namespace pipeline

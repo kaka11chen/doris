@@ -73,7 +73,6 @@ void ResourceContext::to_thrift_query_statistics(TQueryStatistics* statistics) c
     statistics->__set_cache_read_bytes(_cache_read_bytes);
     statistics->__set_cache_write_bytes(_cache_write_bytes);
 }
-}
 
 void ResourceContext::to_thrift_query_statistics(TQueryStatistics* statistics,
                                                  RuntimeState* state) const {
