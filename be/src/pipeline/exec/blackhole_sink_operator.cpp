@@ -289,8 +289,6 @@ Status BlackholeSinkOperatorX::_send_cache_metrics_batch(RuntimeState* state,
     MysqlRowBuffer<> row_buffer;
 
     // Push values for each column
-    row_buffer.push_bigint(local_state._rows_processed);                // RowsProcessed
-    row_buffer.push_bigint(local_state._bytes_processed);               // BytesProcessed
     row_buffer.push_bigint(local_state._scan_rows);                     // ScanRows
     row_buffer.push_bigint(local_state._scan_bytes);                    // ScanBytes
     row_buffer.push_bigint(local_state._scan_bytes_from_local_storage); // ScanBytesFromLocalStorage
@@ -303,15 +301,15 @@ Status BlackholeSinkOperatorX::_send_cache_metrics_batch(RuntimeState* state,
     result->result_batch.rows[0].assign(row_buffer.buf(), row_buffer.length());
 
     // // Add attach_infos for additional metadata
-    // std::map<std::string, std::string> attach_infos;
-    // attach_infos.insert(std::make_pair("RowsProcessed", std::to_string(local_state._rows_processed)));
-    // attach_infos.insert(std::make_pair("BytesProcessed", std::to_string(local_state._bytes_processed)));
-    // attach_infos.insert(std::make_pair("ScanRows", std::to_string(local_state._scan_rows)));
-    // attach_infos.insert(std::make_pair("ScanBytes", std::to_string(local_state._scan_bytes)));
-    // attach_infos.insert(std::make_pair("ScanBytesFromLocalStorage", std::to_string(local_state._scan_bytes_from_local_storage)));
-    // attach_infos.insert(std::make_pair("ScanBytesFromRemoteStorage", std::to_string(local_state._scan_bytes_from_remote_storage)));
+    std::map<std::string, std::string> attach_infos;
+    // Add BE ID to identify which backend sent this data
+    attach_infos.insert(std::make_pair("be_id", std::to_string(state->backend_id())));
+    attach_infos.insert(std::make_pair("ScanRows", std::to_string(local_state._scan_rows)));
+    attach_infos.insert(std::make_pair("ScanBytes", std::to_string(local_state._scan_bytes)));
+    attach_infos.insert(std::make_pair("ScanBytesFromLocalStorage", std::to_string(local_state._scan_bytes_from_local_storage)));
+    attach_infos.insert(std::make_pair("ScanBytesFromRemoteStorage", std::to_string(local_state._scan_bytes_from_remote_storage)));
 
-    // result->result_batch.__set_attached_infos(attach_infos);
+    result->result_batch.__set_attached_infos(attach_infos);
 
     // Send the batch through the result buffer (like VFileResultWriter does)
     // LOG(INFO) << "Sending cache metrics batch to FE - Rows: " << local_state._rows_processed

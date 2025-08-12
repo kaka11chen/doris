@@ -202,6 +202,32 @@ import java.util.stream.Collectors;
 public class StmtExecutor {
     private static final Logger LOG = LogManager.getLogger(StmtExecutor.class);
 
+    // Inner class to hold aggregated data per BE for blackhole queries
+    private static class BeAggregatedData {
+        private long scanRows = 0;
+        private long scanBytes = 0;
+        private long scanBytesFromLocalStorage = 0;
+        private long scanBytesFromRemoteStorage = 0;
+
+        public void processData(long scanRows, long scanBytes,
+                long scanBytesFromLocalStorage, long scanBytesFromRemoteStorage) {
+            this.scanRows = scanRows;
+            this.scanBytes = scanBytes;
+            this.scanBytesFromLocalStorage = scanBytesFromLocalStorage;
+            this.scanBytesFromRemoteStorage = scanBytesFromRemoteStorage;
+        }
+
+        public List<Long> toList() {
+            return Lists.newArrayList(scanRows, scanBytes,
+                    scanBytesFromLocalStorage, scanBytesFromRemoteStorage);
+        }
+
+        public long getScanRows() { return scanRows; }
+        public long getScanBytes() { return scanBytes; }
+        public long getScanBytesFromLocalStorage() { return scanBytesFromLocalStorage; }
+        public long getScanBytesFromRemoteStorage() { return scanBytesFromRemoteStorage; }
+    }
+
     private static final AtomicLong STMT_ID_GENERATOR = new AtomicLong(0);
     public static final int MAX_DATA_TO_SEND_FOR_TXN = 100;
     private static Set<String> blockSqlAstNames = Sets.newHashSet();
@@ -231,6 +257,8 @@ public class StmtExecutor {
     // The profile of this execution
     private final Profile profile;
     private Boolean isForwardedToMaster = null;
+    // Map to store aggregated data per BE for blackhole queries
+    private Map<String, BeAggregatedData> blackholeBeDataMap = Maps.newHashMap();
 
     // The result schema if "dry_run_query" is true.
     // Only one column to indicate the real return row numbers.
@@ -283,9 +311,9 @@ public class StmtExecutor {
         }
         this.context.setStatementContext(statementContext);
         this.profile = new Profile(
-                            context.getSessionVariable().enableProfile(),
-                            context.getSessionVariable().getProfileLevel(),
-                            context.getSessionVariable().getAutoProfileThresholdMs());
+                context.getSessionVariable().enableProfile(),
+                context.getSessionVariable().getProfileLevel(),
+                context.getSessionVariable().getAutoProfileThresholdMs());
     }
 
     public boolean isProxy() {
@@ -889,7 +917,7 @@ public class StmtExecutor {
                     // errCode = 2, detailMessage = No backend available as scan node,
                     // please check the status of your backends. [10003: not alive]
                     List<String> bes = Env.getCurrentSystemInfo().getAllBackendIds().stream()
-                                .map(id -> Long.toString(id)).collect(Collectors.toList());
+                            .map(id -> Long.toString(id)).collect(Collectors.toList());
                     String msg = e.getMessage();
                     if (e instanceof UserException
                             && msg.contains(SystemInfoService.NO_SCAN_NODE_BACKEND_AVAILABLE_MSG)) {
@@ -961,7 +989,7 @@ public class StmtExecutor {
 
                 if (isForwardToMaster()) {
                     if (context.getCommand() == MysqlCommand.COM_STMT_PREPARE
-                                || context.getCommand() == MysqlCommand.COM_STMT_EXECUTE) {
+                            || context.getCommand() == MysqlCommand.COM_STMT_EXECUTE) {
                         throw new UserException("Forward master command is not supported for prepare statement");
                     }
                     if (isProxy) {
@@ -1174,7 +1202,7 @@ public class StmtExecutor {
             return false;
         }
         return Env.getCurrentEnv().getAccessManager().checkCloudPriv(ConnectContext.get().getCurrentUserIdentity(),
-            clusterName, PrivPredicate.USAGE, ResourceTypeEnum.CLUSTER);
+                clusterName, PrivPredicate.USAGE, ResourceTypeEnum.CLUSTER);
     }
 
     // Analyze one statement to structure in memory.
@@ -1433,7 +1461,7 @@ public class StmtExecutor {
     private void handleQueryStmt() throws Exception {
         if (LOG.isDebugEnabled()) {
             LOG.debug("Handling query {} with query id {}",
-                          originStmt.originStmt, DebugUtil.printId(context.queryId));
+                    originStmt.originStmt, DebugUtil.printId(context.queryId));
         }
 
         if (context.getConnectType() == ConnectType.MYSQL) {
@@ -1525,11 +1553,11 @@ public class StmtExecutor {
         boolean isBlackHoleClause = queryStmt.hasBlackHoleClause();
         if (statementContext.isShortCircuitQuery()) {
             ShortCircuitQueryContext shortCircuitQueryContext =
-                        statementContext.getShortCircuitQueryContext() != null
-                                ? statementContext.getShortCircuitQueryContext()
-                                : new ShortCircuitQueryContext(planner, (Queriable) parsedStmt);
+                    statementContext.getShortCircuitQueryContext() != null
+                            ? statementContext.getShortCircuitQueryContext()
+                            : new ShortCircuitQueryContext(planner, (Queriable) parsedStmt);
             coordBase = new PointQueryExecutor(shortCircuitQueryContext,
-                        context.getSessionVariable().getMaxMsgSizeOfResultReceiver());
+                    context.getSessionVariable().getMaxMsgSizeOfResultReceiver());
             context.getState().setIsQuery(true);
         } else if (planner instanceof NereidsPlanner && ((NereidsPlanner) planner).getDistributedPlans() != null) {
             coord = new NereidsCoordinator(context,
@@ -1591,25 +1619,59 @@ public class StmtExecutor {
                             }
                             sendFields(OutFileClause.RESULT_COL_NAMES, OutFileClause.RESULT_COL_TYPES);
                         } else if (isBlackHoleClause) {
-                            sendFields(BlackHoleClause.RESULT_COL_NAMES, BlackHoleClause.RESULT_COL_TYPES);
+                            // sendFields(BlackHoleClause.RESULT_COL_NAMES, BlackHoleClause.RESULT_COL_TYPES);
                         } else {
                             sendFields(queryStmt.getColLabels(), queryStmt.getFieldInfos(),
                                     getReturnTypes(queryStmt));
                         }
                         isSendFields = true;
                     }
-                    for (ByteBuffer row : batch.getBatch().getRows()) {
-                        channel.sendOnePacket(row);
+                    if (isBlackHoleClause) {
+                        // For blackhole queries, aggregate data by BE nodes
+                        Map<String, String> attachedInfos = batch.getBatch().getAttachedInfos();
+                        if (attachedInfos != null && !attachedInfos.isEmpty()) {
+                            // Parse BE-specific data from attached infos
+                            String beId = attachedInfos.getOrDefault("be_id", "unknown");
+                            String scanRows = attachedInfos.getOrDefault("ScanRows", "0");
+                            String scanBytes = attachedInfos.getOrDefault("ScanBytes", "0");
+                            String localStorage = attachedInfos.getOrDefault("ScanBytesFromLocalStorage", "0");
+                            String remoteStorage = attachedInfos.getOrDefault("ScanBytesFromRemoteStorage", "0");
+
+                            BeAggregatedData data = blackholeBeDataMap.computeIfAbsent(beId, k -> new BeAggregatedData());
+                            try {
+                                data.processData(
+                                        Long.parseLong(scanRows),
+                                        Long.parseLong(scanBytes),
+                                        Long.parseLong(localStorage),
+                                        Long.parseLong(remoteStorage)
+                                );
+                            } catch (NumberFormatException e) {
+                                LOG.warn("Failed to parse BE data for BE {}: {}", beId, e.getMessage());
+                            }
+                        }
+
+                        // For blackhole queries, we don't send individual rows, just accumulate data
+                        context.updateReturnRows(0); // No rows sent to client
+                    } else {
+                        // For non-blackhole queries, send data as before
+                        for (ByteBuffer row : batch.getBatch().getRows()) {
+                            channel.sendOnePacket(row);
+                        }
+                        context.updateReturnRows(batch.getBatch().getRows().size());
                     }
                     profile.getSummaryProfile().freshWriteResultConsumeTime();
-                    context.updateReturnRows(batch.getBatch().getRows().size());
                     context.addResultAttachedInfo(batch.getBatch().getAttachedInfos());
                 }
                 if (batch.isEos()) {
+                    // For blackhole queries, send aggregated data when query is complete
+                    if (isBlackHoleClause && !blackholeBeDataMap.isEmpty()) {
+                        // Send aggregated results to client
+                        sendAggregatedBlackholeResults(channel);
+                    }
                     break;
                 }
             }
-            if (cacheAnalyzer != null && !isDryRun) {
+            if (cacheAnalyzer != null && !isDryRun && !isBlackHoleClause) {
                 if (cacheResult != null && cacheAnalyzer.getHitRange() == Cache.HitRange.Right) {
                     isSendFields =
                             sendCachedValues(channel, cacheResult.getValuesList(), queryStmt, isSendFields,
@@ -1628,7 +1690,7 @@ public class StmtExecutor {
                 if (isOutfileQuery) {
                     sendFields(OutFileClause.RESULT_COL_NAMES, OutFileClause.RESULT_COL_TYPES);
                 } else if (isBlackHoleClause) {
-                    sendFields(BlackHoleClause.RESULT_COL_NAMES, BlackHoleClause.RESULT_COL_TYPES);
+                    // sendFields(BlackHoleClause.RESULT_COL_NAMES, BlackHoleClause.RESULT_COL_TYPES);
                 } else {
                     if (ConnectContext.get() != null && isDryRun) {
                         // Return a one row one column result set, with the real result number
@@ -1730,8 +1792,8 @@ public class StmtExecutor {
             if (backend.isAlive()) {
                 List<Long> tabletIdList = new ArrayList<Long>();
                 Set<Long> beTabletIds = ((CloudEnv) Env.getCurrentEnv())
-                                           .getCloudTabletRebalancer()
-                                           .getSnapshotTabletsInPrimaryByBeId(backend.getId());
+                        .getCloudTabletRebalancer()
+                        .getSnapshotTabletsInPrimaryByBeId(backend.getId());
                 allTabletIds.forEach(tabletId -> {
                     if (beTabletIds.contains(tabletId)) {
                         tabletIdList.add(tabletId);
@@ -1950,7 +2012,7 @@ public class StmtExecutor {
         context.getMysqlChannel().sendOnePacket(serializer.toByteBuffer());
         StatementContext statementContext = context.getStatementContext();
         boolean isShortCircuited = statementContext.isShortCircuitQuery()
-                        && statementContext.getShortCircuitQueryContext() != null;
+                && statementContext.getShortCircuitQueryContext() != null;
         ShortCircuitQueryContext ctx = statementContext.getShortCircuitQueryContext();
         // send field one by one
         for (int i = 0; i < colNames.size(); ++i) {
@@ -2105,7 +2167,7 @@ public class StmtExecutor {
     public void handleReplayStmt(String result) throws IOException {
         ShowResultSetMetaData metaData = ShowResultSetMetaData.builder()
                 .addColumn(new Column("Plan Replayer dump url",
-                ScalarType.createVarchar(20)))
+                        ScalarType.createVarchar(20)))
                 .build();
         if (context.getConnectType() == ConnectType.MYSQL) {
             sendMetaData(metaData);
@@ -2213,7 +2275,7 @@ public class StmtExecutor {
 
     private boolean isShortCircuitedWithCtx() {
         return statementContext.isShortCircuitQuery()
-                        && statementContext.getShortCircuitQueryContext() != null;
+                && statementContext.getShortCircuitQueryContext() != null;
     }
 
     private List<Type> exprToType(List<Expr> exprs) {
@@ -2523,62 +2585,60 @@ public class StmtExecutor {
     // }
 
     /**
-     * Handle result reporting for BlackholeSink (WARM UP SELECT) queries
+     * Send aggregated blackhole query results to the client
      */
-    private void handleBlackholeSinkResult(CoordInterface coordBase, RowBatch batch) {
-        try {
-            // Collect cache metrics from query statistics
-            long prewarmedRows = 0;
-            long prewarmedBytes = 0;
-            long cacheReadBytes = 0;
-            long cacheWriteBytes = 0;
+    private void sendAggregatedBlackholeResults(MysqlChannel channel) throws IOException {
+        // Create a result set with aggregated data per BE
+        ShowResultSetMetaData metaData = ShowResultSetMetaData.builder()
+                .addColumn(new Column("BackendId", ScalarType.createVarchar(20)))
+                .addColumn(new Column("ScanRows", ScalarType.createVarchar(20)))
+                .addColumn(new Column("ScanBytes", ScalarType.createVarchar(20)))
+                .addColumn(new Column("ScanBytesFromLocalStorage", ScalarType.createVarchar(20)))
+                .addColumn(new Column("ScanBytesFromRemoteStorage", ScalarType.createVarchar(20)))
+                .build();
 
-            if (batch.getQueryStatistics() != null) {
-                prewarmedRows = batch.getQueryStatistics().getReturnedRows();
-                prewarmedBytes = batch.getQueryStatistics().getScanBytes();
-                
-                // TODO: Cache metrics will be added in future version
-                // Currently PQueryStatistics doesn't have cache-specific fields
-                // We would need to extend the proto definition to include:
-                // - cache_read_bytes
-                // - cache_write_bytes
-                cacheReadBytes = batch.getQueryStatistics().getScanBytesFromRemoteStorage();
-                cacheWriteBytes = batch.getQueryStatistics().getScanBytesFromLocalStorage();
-            }
+        List<List<String>> rows = Lists.newArrayList();
+        long totalScanRows = 0;
+        long totalScanBytes = 0;
+        long totalScanBytesFromLocalStorage = 0;
+        long totalScanBytesFromRemoteStorage = 0;
 
-            // If we didn't get rows from statistics, try to get from coordinator
-            if (prewarmedRows == 0 && coordBase instanceof Coordinator) {
-                prewarmedRows = ((Coordinator) coordBase).getNumReceivedRows();
-            }
+        // Add a row for each BE with its aggregated data
+        for (Map.Entry<String, BeAggregatedData> entry : blackholeBeDataMap.entrySet()) {
+            String beId = entry.getKey();
+            BeAggregatedData data = entry.getValue();
 
-            // Build info message with cache metrics (JSON format)
-            StringBuilder infoMessage = new StringBuilder();
-            infoMessage.append("{");
-            infoMessage.append("\"status\":\"Success\"");
-            infoMessage.append(",\"prewarmedRows\":").append(prewarmedRows);
-            infoMessage.append(",\"prewarmedBytes\":").append(prewarmedBytes);
-            infoMessage.append(",\"cacheReadBytes\":").append(cacheReadBytes);
-            infoMessage.append(",\"cacheWriteBytes\":").append(cacheWriteBytes);
-            infoMessage.append("}");
+            List<String> row = Lists.newArrayList(
+                    beId,
+                    String.valueOf(data.getScanRows()),
+                    String.valueOf(data.getScanBytes()),
+                    String.valueOf(data.getScanBytesFromLocalStorage()),
+                    String.valueOf(data.getScanBytesFromRemoteStorage())
+            );
 
-            System.out.println(infoMessage);
+            rows.add(row);
 
-            // Set OK status with prewarm information
-            context.getState().setOk(prewarmedRows, 0, infoMessage.toString());
-
-            // // set insert result in connection context,
-            // // so that user can use `show insert result` to get info of the last insert operation.
-            // context.setOrUpdateInsertResult(txnId, labelName, database.getFullName(), table.getName(),
-            //         txnStatus, loadedRows, filteredRows);
-            // update it, so that user can get loaded rows in fe.audit.log
-            context.updateReturnRows((int)prewarmedRows);
-
-            LOG.info("WARM UP SELECT completed. Rows: {}, Bytes: {}, CacheRead: {}, CacheWrite: {}", 
-                    prewarmedRows, prewarmedBytes, cacheReadBytes, cacheWriteBytes);
-
-        } catch (Exception e) {
-            LOG.warn("Failed to collect WARM UP SELECT metrics, using default OK response", e);
-            context.getState().setOk();
+            // Accumulate totals
+            totalScanRows += data.getScanRows();
+            totalScanBytes += data.getScanBytes();
+            totalScanBytesFromLocalStorage += data.getScanBytesFromLocalStorage();
+            totalScanBytesFromRemoteStorage += data.getScanBytesFromRemoteStorage();
         }
+
+        // Add a total row
+        List<String> totalRow = Lists.newArrayList(
+                "TOTAL",
+                String.valueOf(totalScanRows),
+                String.valueOf(totalScanBytes),
+                String.valueOf(totalScanBytesFromLocalStorage),
+                String.valueOf(totalScanBytesFromRemoteStorage)
+        );
+        rows.add(totalRow);
+
+        ResultSet resultSet = new ShowResultSet(metaData, rows);
+        sendResultSet(resultSet);
+
+        // Clear the map for the next query
+        blackholeBeDataMap.clear();
     }
 }
