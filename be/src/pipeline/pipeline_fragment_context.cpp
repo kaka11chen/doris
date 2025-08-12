@@ -1181,6 +1181,8 @@ Status PipelineFragmentContext::_create_data_sink(ObjectPool* pool, const TDataS
 
         _sink.reset(new BlackholeSinkOperatorX(next_sink_operator_id(), 0, empty_sink,
                                                empty_destinations));
+        // Set warm up query flag for blackhole sink
+        _runtime_state->set_warm_up_query(true);
         break;
     }
     default:

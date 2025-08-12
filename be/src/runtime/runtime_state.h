@@ -691,6 +691,10 @@ public:
     int64_t get_datacache_read_count() const { return _num_datacache_read_count.load(); }
     int64_t get_datacache_write_count() const { return _num_datacache_write_count.load(); }
 
+    // Warm up query methods
+    void set_warm_up_query(bool warm_up) { _is_warm_up_query = warm_up; }
+    bool is_warm_up_query() const { return _is_warm_up_query; }
+
 private:
     Status create_error_log_file();
 
@@ -828,6 +832,9 @@ private:
     std::atomic<int64_t> _num_datacache_write_time_us {0};
     std::atomic<int64_t> _num_datacache_read_count {0};
     std::atomic<int64_t> _num_datacache_write_count {0};
+
+    // Warm up query flag
+    bool _is_warm_up_query = false;
 };
 
 #define RETURN_IF_CANCELLED(state)               \

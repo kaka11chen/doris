@@ -1024,6 +1024,7 @@ import org.apache.doris.policy.FilterType;
 import org.apache.doris.policy.PolicyTypeEnum;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.SqlModeHelper;
+import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.resource.workloadschedpolicy.WorkloadActionMeta;
 import org.apache.doris.resource.workloadschedpolicy.WorkloadConditionMeta;
 import org.apache.doris.statistics.AnalysisInfo;
@@ -8365,35 +8366,16 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
     @Override
     public LogicalPlan visitWarmUpSelect(DorisParser.WarmUpSelectContext ctx) {
         LogicalPlan plan = plan(ctx.query());
-        
-        // Check if the plan contains multiple scan nodes (multi-table queries)
-        // Count all catalog relation scan nodes in the plan tree
-        int scanNodeCount = plan.collectToList(node -> node instanceof LogicalCatalogRelation).size();
-        if (scanNodeCount > 1) {
-            throw new IllegalStateException("WARM UP SELECT only supports single table queries, multi-table queries are not allowed");
+        if (ConnectContext.get() == null || !ConnectContext.get().getSessionVariable().isEnableFileCache())
+        {
+            throw new IllegalStateException("WARM UP SELECT requires session variable enable_file_cache=true");
         }
-        
+        // int scanNodeCount = plan.collectToList(n -> n instanceof LogicalCatalogRelation).size();
+        // if (scanNodeCount > 1) {
+        //     throw new IllegalStateException("WARM UP SELECT only supports single table queries, multi-table queries are not allowed");
+        // }
         LogicalSink<?> sink = new UnboundBlackholeSink<>(plan);
         return withExplain(sink, ctx.explain());
-
-        // // Parse the select statement
-        // LogicalPlan plan = visitQuery(ctx.query());
-        //
-        // // Parse properties if present
-        // Optional<Map<String, String>> properties = Optional.empty();
-        // if (ctx.properties != null) {
-        //     properties = Optional.of(visitPropertyClause(ctx.properties));
-        // }
-        //
-        // //List<String> nameParts, List<String> colNames, List<String> hints,
-        // //             List<String> partitions, CHILD_TYPE child
-        // LogicalSink<?> sink = new UnboundBlackholeSink<>(ImmutableList.of("sys", "blackhole"), ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), plan);
-        // Optional<LogicalPlan> cte = Optional.empty();
-        // // if (ctx.cte() != null) {
-        // //     cte = Optional.ofNullable(withCte(plan, ctx.cte()));
-        // // }
-        // LogicalPlan command = new InsertIntoTableCommand(sink, Optional.empty(), Optional.empty(), cte, true, Optional.empty());
-        // return withExplain(command, ctx.explain());
     }
 
     @Override

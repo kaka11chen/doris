@@ -410,6 +410,8 @@ protected:
     friend class ScanLocalState;
     friend class OlapScanLocalState;
 
+    RuntimeState* _state;
+
     // For load scan node, there should be both input and output tuple descriptor.
     // For query scan node, there is only output_tuple_desc.
     TupleId _input_tuple_id = -1;
