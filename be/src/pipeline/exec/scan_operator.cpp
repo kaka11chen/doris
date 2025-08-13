@@ -1338,14 +1338,14 @@ Status ScanOperatorX<LocalStateType>::get_block(RuntimeState* state, vectorized:
     DCHECK(local_state._scanner_ctx != nullptr);
     RETURN_IF_ERROR(local_state._scanner_ctx->get_block_from_queue(state, block, eos, 0));
 
-    LOG(INFO) << "_state->is_warm_up_query(): " << _state->is_warm_up_query()
+    /*LOG(INFO) << "_state->is_warm_up_query(): " << _state->is_warm_up_query()
               << ", block rows: " << block->rows() << ", eos: " << *eos;
     // For warm up queries, discard the data but keep statistics
     if (_state->is_warm_up_query() && !*eos && block->rows() > 0) {
         LOG(INFO) << "For warm up queries, discard the data but keep statistics. block rows before clear: " << block->rows();
         block->clear_column_data();
         LOG(INFO) << "For warm up queries, block rows after clear: " << block->rows();
-    }
+    }*/
 
     local_state.reached_limit(block, eos);
     if (*eos) {

@@ -1024,7 +1024,6 @@ import org.apache.doris.policy.FilterType;
 import org.apache.doris.policy.PolicyTypeEnum;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.SqlModeHelper;
-import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.resource.workloadschedpolicy.WorkloadActionMeta;
 import org.apache.doris.resource.workloadschedpolicy.WorkloadConditionMeta;
 import org.apache.doris.statistics.AnalysisInfo;
@@ -1997,10 +1996,10 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
             // separator
             String lineDelimiter = ddc.separator == null
                     ? null : LogicalPlanBuilderAssistant.escapeBackSlash(
-                            ddc.separator.getText().substring(1, ddc.separator.getText().length() - 1));
+                    ddc.separator.getText().substring(1, ddc.separator.getText().length() - 1));
             String columnSeparator = ddc.comma == null
                     ? null : LogicalPlanBuilderAssistant.escapeBackSlash(
-                            ddc.comma.getText().substring(1, ddc.comma.getText().length() - 1));
+                    ddc.comma.getText().substring(1, ddc.comma.getText().length() - 1));
             String srcTable = ddc.sourceTableName == null ? null : ddc.sourceTableName.getText();
             Map<String, String> dataProperties = ddc.propertyClause() == null ? new HashMap<>()
                     : visitPropertyClause(ddc.propertyClause());
@@ -5181,14 +5180,14 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
         }
         if (ctx.limitClause() != null) {
             limit = ctx.limitClause().limit != null
-                ? Long.parseLong(ctx.limitClause().limit.getText())
-                : 0;
+                    ? Long.parseLong(ctx.limitClause().limit.getText())
+                    : 0;
             if (limit < 0) {
                 throw new ParseException("Limit requires non-negative number", ctx.limitClause());
             }
             offset = ctx.limitClause().offset != null
-                ? Long.parseLong(ctx.limitClause().offset.getText())
-                : 0;
+                    ? Long.parseLong(ctx.limitClause().offset.getText())
+                    : 0;
             if (offset < 0) {
                 throw new ParseException("Offset requires non-negative number", ctx.limitClause());
             }
@@ -6170,9 +6169,9 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
         boolean applyToAll = !ctx.ALL().isEmpty();
 
         return new AdminSetFrontendConfigCommand(
-            NodeType.FRONTEND,
-            configs,
-            applyToAll);
+                NodeType.FRONTEND,
+                configs,
+                applyToAll);
     }
 
     @Override
@@ -8365,18 +8364,97 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
 
     @Override
     public LogicalPlan visitWarmUpSelect(DorisParser.WarmUpSelectContext ctx) {
-        LogicalPlan plan = plan(ctx.query());
-        if (ConnectContext.get() == null || !ConnectContext.get().getSessionVariable().isEnableFileCache())
-        {
-            throw new IllegalStateException("WARM UP SELECT requires session variable enable_file_cache=true");
+        // 构建一个基本的SELECT查询计划
+        LogicalPlan relation;
+        if (ctx.warmUpSingleTableRef() == null) {
+            relation = new LogicalOneRowRelation(StatementScopeIdGenerator.newRelationId(),
+                    ImmutableList.of(new Alias(Literal.of(0))));
+        } else {
+            relation = visitWarmUpSingleTableRef(ctx.warmUpSingleTableRef());
         }
-        // int scanNodeCount = plan.collectToList(n -> n instanceof LogicalCatalogRelation).size();
-        // if (scanNodeCount > 1) {
-        //     throw new IllegalStateException("WARM UP SELECT only supports single table queries, multi-table queries are not allowed");
-        // }
-        LogicalSink<?> sink = new UnboundBlackholeSink<>(plan);
+
+        // 应用WHERE子句
+        LogicalPlan filter = withFilter(relation, Optional.ofNullable(ctx.whereClause()));
+
+        // 处理SELECT列
+        List<Expression> projectList = visitNamedExpressionSeq(ctx.namedExpressionSeq());
+
+        // 验证只允许简单的列引用，不允许聚合函数等复杂表达式
+        for (Expression expr : projectList) {
+            if (!isSimpleColumnReference(expr)) {
+                throw new AnalysisException("WARM UP SELECT only supports simple column references, "
+                        + "aggregate functions and complex expressions are not allowed");
+            }
+        }
+
+        LogicalProject project = new LogicalProject(projectList, filter);
+
+        if (ConnectContext.get() == null || !ConnectContext.get().getSessionVariable().isEnableFileCache() ||
+                ConnectContext.get().getSessionVariable().isDisableFileCache())
+        {
+            throw new AnalysisException("WARM UP SELECT requires session variable enable_file_cache=true and disable_file_cache=false");
+        }
+
+        LogicalSink<?> sink = new UnboundBlackholeSink<>(project);
         return withExplain(sink, ctx.explain());
     }
+
+    /**
+     * Check if an expression is a simple column reference (not aggregate functions or complex expressions)
+     */
+    private boolean isSimpleColumnReference(Expression expr) {
+        // Allow simple column references
+        if (expr instanceof Slot) {
+            return true;
+        }
+
+        // Allow star expressions (*)
+        if (expr instanceof UnboundStar) {
+            return true;
+        }
+
+        // Allow literals (constants)
+        if (expr instanceof Literal) {
+            return true;
+        }
+
+        // Reject everything else (including function calls, arithmetic expressions, etc.)
+        return false;
+    }
+
+    // @Override
+    // public LogicalPlan visitWarmUpSelect(DorisParser.WarmUpSelectContext ctx) {
+    //     LogicalPlan plan = plan(ctx.query());
+    //
+    //     // Check if the plan contains multiple scan nodes (multi-table queries)
+    //     // Count all catalog relation scan nodes in the plan tree
+    //     // int scanNodeCount = plan.collectToList(node -> node instanceof LogicalCatalogRelation).size();
+    //     // if (scanNodeCount > 1) {
+    //     //     throw new IllegalStateException("WARM UP SELECT only supports single table queries, multi-table queries are not allowed");
+    //     // }
+    //
+    //     LogicalSink<?> sink = new UnboundBlackholeSink<>(plan);
+    //     return withExplain(sink, ctx.explain());
+    //
+    //     // // Parse the select statement
+    //     // LogicalPlan plan = visitQuery(ctx.query());
+    //     //
+    //     // // Parse properties if present
+    //     // Optional<Map<String, String>> properties = Optional.empty();
+    //     // if (ctx.properties != null) {
+    //     //     properties = Optional.of(visitPropertyClause(ctx.properties));
+    //     // }
+    //     //
+    //     // //List<String> nameParts, List<String> colNames, List<String> hints,
+    //     // //             List<String> partitions, CHILD_TYPE child
+    //     // LogicalSink<?> sink = new UnboundBlackholeSink<>(ImmutableList.of("sys", "blackhole"), ImmutableList.of(), ImmutableList.of(), ImmutableList.of(), plan);
+    //     // Optional<LogicalPlan> cte = Optional.empty();
+    //     // // if (ctx.cte() != null) {
+    //     // //     cte = Optional.ofNullable(withCte(plan, ctx.cte()));
+    //     // // }
+    //     // LogicalPlan command = new InsertIntoTableCommand(sink, Optional.empty(), Optional.empty(), cte, true, Optional.empty());
+    //     // return withExplain(command, ctx.explain());
+    // }
 
     @Override
     public LogicalPlan visitCreateResource(DorisParser.CreateResourceContext ctx) {
@@ -8849,7 +8927,7 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
             DorisParser.RetentionSnapshotContext retentionSnapshotContext = ctx.retentionSnapshot();
             if (retentionSnapshotContext.minSnapshotsToKeep() != null) {
                 numSnapshots = Optional.of(
-                    Integer.parseInt(retentionSnapshotContext.minSnapshotsToKeep().value.getText()));
+                        Integer.parseInt(retentionSnapshotContext.minSnapshotsToKeep().value.getText()));
             }
             if (retentionSnapshotContext.timeValueWithUnit() != null) {
                 retention = Optional.of(visitTimeValueWithUnit(retentionSnapshotContext.timeValueWithUnit()));
@@ -8900,7 +8978,7 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
     @Override
     public Long visitTimeValueWithUnit(DorisParser.TimeValueWithUnitContext ctx) {
         return TimeUnit.valueOf(ctx.timeUnit.getText().toUpperCase())
-            .toMillis(Long.parseLong(ctx.timeValue.getText()));
+                .toMillis(Long.parseLong(ctx.timeValue.getText()));
     }
 
     @Override
@@ -8922,4 +9000,27 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
     public AlterTableOp visitDropBranchClause(DorisParser.DropBranchClauseContext ctx) {
         return new DropBranchOp(ctx.name.getText(), ctx.EXISTS() != null);
     }
+
+    public LogicalPlan visitWarmUpSingleTableRef(DorisParser.WarmUpSingleTableRefContext ctx) {
+        List<String> nameParts = visitMultipartIdentifier(ctx.multipartIdentifier());
+
+        // Create a simple UnboundRelation for warm up queries
+        UnboundRelation relation = new UnboundRelation(
+                StatementScopeIdGenerator.newRelationId(),
+                nameParts,
+                ImmutableList.of(), // partitionNames
+                false, // isTempPart
+                ImmutableList.of(), // tabletIdLists
+                ImmutableList.of(), // relationHints
+                Optional.empty(), // tableSample
+                Optional.empty(), // indexName
+                null, // scanParams
+                Optional.empty() // tableSnapshot
+        );
+
+        LogicalPlan checkedRelation = LogicalPlanBuilderAssistant.withCheckPolicy(relation);
+        LogicalPlan plan = withTableAlias(checkedRelation, ctx.tableAlias());
+        return plan;
+    }
 }
+
