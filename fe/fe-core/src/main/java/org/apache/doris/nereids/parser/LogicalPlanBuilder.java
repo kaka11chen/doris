@@ -8389,10 +8389,14 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
 
         LogicalProject project = new LogicalProject(projectList, filter);
 
-        if (ConnectContext.get() == null || !ConnectContext.get().getSessionVariable().isEnableFileCache() ||
-                ConnectContext.get().getSessionVariable().isDisableFileCache())
+        if (Config.isNotCloudMode() && (!ConnectContext.get().getSessionVariable().isEnableFileCache()))
         {
-            throw new AnalysisException("WARM UP SELECT requires session variable enable_file_cache=true and disable_file_cache=false");
+            throw new AnalysisException("WARM UP SELECT requires session variable enable_file_cache=true");
+        }
+
+        if (Config.isCloudMode() && ConnectContext.get().getSessionVariable().isDisableFileCache())
+        {
+            throw new AnalysisException("WARM UP SELECT requires session variable disable_file_cache=false in cloud mode");
         }
 
         LogicalSink<?> sink = new UnboundBlackholeSink<>(project);
@@ -8410,11 +8414,6 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
 
         // Allow star expressions (*)
         if (expr instanceof UnboundStar) {
-            return true;
-        }
-
-        // Allow literals (constants)
-        if (expr instanceof Literal) {
             return true;
         }
 
@@ -9023,4 +9022,3 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
         return plan;
     }
 }
-
