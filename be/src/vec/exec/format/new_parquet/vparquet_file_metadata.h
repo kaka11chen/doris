@@ -15,20 +15,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/exec/format/column_type_convert.h"
+#pragma once
+#include <gen_cpp/parquet_types.h>
 
-#include "common/cast_set.h"
-#include "vec/exec/format/hive_column_type_converters.h"
+#include <string>
 
-namespace doris::vectorized::converter {
+#include "common/status.h"
+#include "schema_desc.h"
+
+namespace doris::vectorized::new_parquet {
 #include "common/compile_check_begin.h"
+class FileMetaData {
+public:
+    FileMetaData(tparquet::FileMetaData& metadata, size_t mem_size);
+    ~FileMetaData();
+    Status init_schema();
+    const FieldDescriptor& schema() const { return _schema; }
+    const tparquet::FileMetaData& to_thrift() const;
+    std::string debug_string() const;
+    size_t get_mem_size() const { return _mem_size; }
 
-std::unique_ptr<ColumnTypeConverter> ColumnTypeConverter::get_converter(const DataTypePtr& src_type,
-                                                                        const DataTypePtr& dst_type,
-                                                                        FileFormat file_format) {
-    return HiveColumnTypeConverterFactory::instance()->create_converter(src_type, dst_type,
-                                                                        file_format);
-}
-
+private:
+    tparquet::FileMetaData _metadata;
+    FieldDescriptor _schema;
+    size_t _mem_size;
+};
 #include "common/compile_check_end.h"
-} // namespace doris::vectorized::converter
+
+} // namespace doris::vectorized::new_parquet

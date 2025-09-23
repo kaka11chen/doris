@@ -15,20 +15,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/exec/format/column_type_convert.h"
+#pragma once
 
-#include "common/cast_set.h"
-#include "vec/exec/format/hive_column_type_converters.h"
+#include "vec/exec/format/parquet/decoder.h"
 
-namespace doris::vectorized::converter {
+namespace doris::vectorized::new_parquet {
 #include "common/compile_check_begin.h"
+class ByteStreamSplitDecoder final : public Decoder {
+public:
+    ByteStreamSplitDecoder() = default;
+    ~ByteStreamSplitDecoder() override = default;
 
-std::unique_ptr<ColumnTypeConverter> ColumnTypeConverter::get_converter(const DataTypePtr& src_type,
-                                                                        const DataTypePtr& dst_type,
-                                                                        FileFormat file_format) {
-    return HiveColumnTypeConverterFactory::instance()->create_converter(src_type, dst_type,
-                                                                        file_format);
-}
+    Status decode_values(MutableColumnPtr& doris_column, DataTypePtr& data_type,
+                         ColumnSelectVector& select_vector, bool is_dict_filter) override;
 
+    template <bool has_filter>
+    Status _decode_values(MutableColumnPtr& doris_column, DataTypePtr& data_type,
+                          ColumnSelectVector& select_vector, bool is_dict_filter);
+
+    Status skip_values(size_t num_values) override;
+};
 #include "common/compile_check_end.h"
-} // namespace doris::vectorized::converter
+
+} // namespace doris::vectorized::new_parquet

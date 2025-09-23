@@ -15,16 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "vec/exec/format/parquet/parquet_column_convert.h"
+#include "vec/exec/format/new_parquet/parquet_column_convert.h"
 
 #include <cctz/time_zone.h>
 
 #include "common/cast_set.h"
 #include "runtime/define_primitive_type.h"
 #include "vec/columns/column_nullable.h"
-#include "vec/exec/format/hive_column_type_converters.h"
 
-namespace doris::vectorized::parquet {
+namespace doris::vectorized::new_parquet {
 #include "common/compile_check_begin.h"
 const cctz::time_zone ConvertParams::utc0 = cctz::utc_time_zone();
 
@@ -197,7 +196,8 @@ static void get_decimal_converter(const FieldSchema* field_schema, DataTypePtr s
 
 std::unique_ptr<PhysicalToLogicalConverter> PhysicalToLogicalConverter::get_converter(
         const FieldSchema* field_schema, DataTypePtr src_logical_type,
-        const DataTypePtr& dst_logical_type, const cctz::time_zone* ctz, bool is_dict_filter) {
+        const DataTypePtr& dst_logical_type, const cctz::time_zone* ctz,
+        converter::ColumnTypeConverterFactory* convert_factory, bool is_dict_filter) {
     std::unique_ptr<ConvertParams> convert_params = std::make_unique<ConvertParams>();
     const tparquet::SchemaElement& parquet_schema = field_schema->parquet_schema;
     convert_params->init(field_schema, ctz);
@@ -260,9 +260,8 @@ std::unique_ptr<PhysicalToLogicalConverter> PhysicalToLogicalConverter::get_conv
 
     if (physical_converter->support()) {
         physical_converter->_convert_params = std::move(convert_params);
-        physical_converter->_logical_converter =
-                converter::HiveColumnTypeConverterFactory::instance()->create_converter(
-                        src_logical_type, dst_logical_type, converter::FileFormat::PARQUET);
+        physical_converter->_logical_converter = convert_factory->create_converter(
+                src_logical_type, dst_logical_type, converter::FileFormat::PARQUET);
         if (!physical_converter->_logical_converter->support()) {
             physical_converter = std::make_unique<UnsupportedConverter>(
                     "Unsupported type change: " +
@@ -273,4 +272,4 @@ std::unique_ptr<PhysicalToLogicalConverter> PhysicalToLogicalConverter::get_conv
 }
 #include "common/compile_check_end.h"
 
-} // namespace doris::vectorized::parquet
+} // namespace doris::vectorized::new_parquet
