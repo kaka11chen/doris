@@ -173,6 +173,9 @@ public:
             const VExprContextSPtrs* not_single_slot_filter_conjuncts,
             const std::unordered_map<int, VExprContextSPtrs>* slot_id_to_filter_conjuncts);
 
+    ColumnIdResult _create_column_ids_and_names(const FieldDescriptor* field_desc,
+                                                const TupleDescriptor* tuple_descriptor);
+
     Status _read_position_delete_file(const TFileRangeDesc* delete_range,
                                       DeleteFile* position_delete) final;
 
@@ -217,6 +220,9 @@ public:
             const std::unordered_map<std::string, int>* colname_to_slot_id,
             const VExprContextSPtrs* not_single_slot_filter_conjuncts,
             const std::unordered_map<int, VExprContextSPtrs>* slot_id_to_filter_conjuncts);
+
+    ColumnIdResult _create_column_ids_and_names(const orc::Type* orc_type,
+                                                const TupleDescriptor* tuple_descriptor);
 
 protected:
     std::unique_ptr<GenericReader> _create_equality_reader(
