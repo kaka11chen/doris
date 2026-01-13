@@ -23,6 +23,7 @@
 #include <memory>
 
 #include "common/cast_set.h"
+#include "common/config.h"
 #include "common/status.h"
 #include "olap/page_cache.h"
 #include "util/block_compression.h"
@@ -54,13 +55,11 @@ namespace doris::vectorized {
 // Session-level options for parquet page reading/caching.
 struct ParquetPageReadContext {
     bool enable_parquet_file_page_cache = true;
-    double parquet_page_cache_decompress_threshold = 1.5;
-    bool enable_parquet_cache_compressed_pages = false;
+    std::string created_by; // Parquet file's created_by field for version checking
     ParquetPageReadContext() = default;
-    ParquetPageReadContext(bool enable, double thresh, bool cache_compressed)
+    ParquetPageReadContext(bool enable, const std::string& created_by_str = "")
             : enable_parquet_file_page_cache(enable),
-              parquet_page_cache_decompress_threshold(thresh),
-              enable_parquet_cache_compressed_pages(cache_compressed) {}
+              created_by(created_by_str) {}
 };
 
 template <bool IN_COLLECTION, bool OFFSET_INDEX>
@@ -82,12 +81,17 @@ public:
         int64_t page_cache_decompressed_hit_counter = 0;
         // page_cache_write_counter: number of times this reader wrote an entry into the cache
         int64_t page_cache_write_counter = 0;
+        // page_cache_compressed_write_counter: number of times this reader wrote compressed page into the cache
+        int64_t page_cache_compressed_write_counter = 0;
+        // page_cache_decompressed_write_counter: number of times this reader wrote decompressed page into the cache
+        int64_t page_cache_decompressed_write_counter = 0;
         // page_read_counter: total pages read by this PageReader (includes cache hits and file reads)
         int64_t page_read_counter = 0;
     };
 
     PageReader(io::BufferedStreamReader* reader, io::IOContext* io_ctx, uint64_t offset,
                uint64_t length, size_t total_rows,
+               const tparquet::ColumnMetaData& metadata,
                const tparquet::OffsetIndex* offset_index = nullptr,
                const ParquetPageReadContext& ctx = ParquetPageReadContext());
     ~PageReader() = default;
@@ -179,13 +183,16 @@ public:
     uint64_t file_end_offset() const { return _end_offset; }
     bool cached_decompressed() const {
         return static_cast<double>(_cur_page_header.uncompressed_page_size) <=
-               static_cast<double>(_ctx.parquet_page_cache_decompress_threshold) *
+               static_cast<double>(config::parquet_page_cache_decompress_threshold) *
                        static_cast<double>(_cur_page_header.compressed_page_size);
     }
 
     PageStatistics& page_statistics() { return _page_statistics; }
 
     bool is_header_v2() { return _cur_page_header.__isset.data_page_header_v2; }
+    
+    // Returns whether the current page's cache payload is decompressed
+    bool is_cache_payload_decompressed() const { return _is_cache_payload_decompressed; }
 
     size_t start_row() const { return _start_row; }
 
@@ -220,6 +227,8 @@ private:
     size_t _end_row = 0;
     // total rows in this column chunk
     size_t _total_rows = 0;
+    // Column metadata for this column chunk
+    const tparquet::ColumnMetaData& _metadata;
     // for page index
     size_t _page_index = 0;
     const tparquet::OffsetIndex* _offset_index;
@@ -227,16 +236,17 @@ private:
     // Session-level parquet page cache options
     ParquetPageReadContext _ctx;
 
-    tparquet::PageHeader _cur_page_header;
+    tparquet::PageHeader _cur_page_header;    
+    bool _is_cache_payload_decompressed = true;
 };
 
 template <bool IN_COLLECTION, bool OFFSET_INDEX>
 std::unique_ptr<PageReader<IN_COLLECTION, OFFSET_INDEX>> create_page_reader(
         io::BufferedStreamReader* reader, io::IOContext* io_ctx, uint64_t offset, uint64_t length,
-        size_t total_rows, const tparquet::OffsetIndex* offset_index = nullptr,
+        size_t total_rows, const tparquet::ColumnMetaData& metadata, const tparquet::OffsetIndex* offset_index = nullptr,
         const ParquetPageReadContext& ctx = ParquetPageReadContext()) {
     return std::make_unique<PageReader<IN_COLLECTION, OFFSET_INDEX>>(reader, io_ctx, offset, length,
-                                                                     total_rows, offset_index, ctx);
+                                                                     total_rows, metadata, offset_index, ctx);
 }
 #include "common/compile_check_end.h"
 

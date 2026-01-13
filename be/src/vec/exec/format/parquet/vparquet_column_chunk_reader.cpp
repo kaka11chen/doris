@@ -71,7 +71,7 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::init() {
     size_t chunk_size = _metadata.total_compressed_size;
     // create page reader
     _page_reader = create_page_reader<IN_COLLECTION, OFFSET_INDEX>(
-            _stream_reader, _io_ctx, start_offset, chunk_size, _total_rows, _offset_index, _ctx);
+            _stream_reader, _io_ctx, start_offset, chunk_size, _total_rows, _metadata, _offset_index, _ctx);
     // get the block compression codec
     RETURN_IF_ERROR(get_block_compression_codec(_metadata.codec, &_block_compress_codec));
     _state = INITIALIZED;
@@ -198,35 +198,14 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::load_page_data() {
             // payload_slice points to the bytes after header and levels
             Slice payload_slice(cached.data + header_size + levels_size,
                                 cached.size - header_size - levels_size);
-            // Determine whether cached payload is compressed by comparing sizes
-            bool payload_is_compressed = false;
-            // if (header->__isset.data_page_header_v2) {
-            //     const tparquet::DataPageHeaderV2& header_v2 = header->data_page_header_v2;
-            //     levels_size = header_v2.repetition_levels_byte_length + header_v2.definition_levels_byte_length;
-            //     // compressed_page_size is stored on the top-level PageHeader
-            //     payload_is_compressed = (payload_slice.size == static_cast<size_t>(header->compressed_page_size) - levels_size);
-            // } else if (header->__isset.data_page_header) {
-            //     payload_is_compressed = (payload_slice.size == static_cast<size_t>(header->compressed_page_size));
-            // }
+            
+            bool cache_payload_is_decompressed = _page_reader->is_cache_payload_decompressed();
 
-            if (header->__isset.data_page_header_v2) {
-                const tparquet::DataPageHeaderV2& header_v2 = header->data_page_header_v2;
-                levels_size = header_v2.repetition_levels_byte_length +
-                              header_v2.definition_levels_byte_length;
-                // compressed_page_size is stored on the top-level PageHeader
-                payload_is_compressed =
-                        (!(payload_slice.size ==
-                           static_cast<size_t>(header->uncompressed_page_size) - levels_size)) &&
-                        (payload_slice.size ==
-                         static_cast<size_t>(header->compressed_page_size) - levels_size);
-            } else if (header->__isset.data_page_header) {
-                payload_is_compressed =
-                        (!(payload_slice.size ==
-                           static_cast<size_t>(header->uncompressed_page_size))) &&
-                        (payload_slice.size == static_cast<size_t>(header->compressed_page_size));
-            }
-
-            if (payload_is_compressed && _block_compress_codec != nullptr) {
+            if (cache_payload_is_decompressed) {
+                // Cached payload is already uncompressed
+                _page_data = payload_slice;
+            } else {
+                CHECK(_block_compress_codec);
                 // Decompress cached payload into _decompress_buf for decoding
                 size_t uncompressed_payload_size =
                         header->__isset.data_page_header_v2
@@ -237,9 +216,6 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::load_page_data() {
                 SCOPED_RAW_TIMER(&_chunk_statistics.decompress_time);
                 _chunk_statistics.decompress_cnt++;
                 RETURN_IF_ERROR(_block_compress_codec->decompress(payload_slice, &_page_data));
-            } else {
-                // Cached payload is already uncompressed
-                _page_data = payload_slice;
             }
             // page cache counters were incremented when PageReader did the header-only
             // cache lookup. Do not increment again to avoid double-counting.
@@ -284,9 +260,9 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::load_page_data() {
                 // Decide whether to cache decompressed payload or compressed payload based on threshold
                 bool should_cache_decompressed = false;
                 if (header->compressed_page_size > 0) {
-                    should_cache_decompressed =
+                    should_cache_decompressed = (_metadata.codec == tparquet::CompressionCodec::UNCOMPRESSED) ||
                             (static_cast<double>(header->uncompressed_page_size) <=
-                             static_cast<double>(_ctx.parquet_page_cache_decompress_threshold) *
+                             static_cast<double>(config::parquet_page_cache_decompress_threshold) *
                                      static_cast<double>(header->compressed_page_size));
                 }
 
@@ -295,11 +271,13 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::load_page_data() {
                     !_page_reader->header_bytes().empty()) {
                     if (should_cache_decompressed) {
                         _insert_page_into_cache(level_bytes, _page_data);
+                        _chunk_statistics.page_cache_decompressed_write_counter += 1;
                     } else {
-                        if (_ctx.enable_parquet_cache_compressed_pages) {
+                        if (config::enable_parquet_cache_compressed_pages) {
                             // cache the compressed payload as-is (header | levels | compressed_payload)
                             _insert_page_into_cache(
                                     level_bytes, Slice(compressed_data.data, compressed_data.size));
+                            _chunk_statistics.page_cache_compressed_write_counter += 1;
                         }
                     }
                 }
@@ -309,6 +287,7 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::load_page_data() {
                 if (_ctx.enable_parquet_file_page_cache && !config::disable_storage_page_cache &&
                     StoragePageCache::instance() != nullptr) {
                     _insert_page_into_cache(level_bytes, _page_data);
+                    _chunk_statistics.page_cache_decompressed_write_counter += 1;
                 }
             }
         } else {
@@ -333,6 +312,7 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::load_page_data() {
             if (_ctx.enable_parquet_file_page_cache && !config::disable_storage_page_cache &&
                 StoragePageCache::instance() != nullptr) {
                 _insert_page_into_cache(level_bytes, _page_data);
+                _chunk_statistics.page_cache_decompressed_write_counter += 1;
             }
         }
     }
@@ -425,20 +405,17 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::_decode_dict_page() {
             // Dictionary page layout in cache: header | payload (compressed or uncompressed)
             Slice payload_slice(cached.data + header_size, cached.size - header_size);
 
-            // Determine whether cached payload is compressed by comparing sizes
-            bool payload_is_compressed =
-                    (!(payload_slice.size == static_cast<size_t>(uncompressed_size))) &&
-                    (payload_slice.size == static_cast<size_t>(header->compressed_page_size));
+            bool cache_payload_is_decompressed = _page_reader->is_cache_payload_decompressed();
 
-            if (payload_is_compressed && _block_compress_codec != nullptr) {
+            if (cache_payload_is_decompressed) {
+                 // Use cached decompressed dictionary data
+                memcpy(dict_data.get(), payload_slice.data, payload_slice.size);
+                dict_loaded = true;
+            } else {
+                CHECK(_block_compress_codec);
                 // Decompress cached compressed dictionary data
                 Slice dict_slice(dict_data.get(), uncompressed_size);
                 RETURN_IF_ERROR(_block_compress_codec->decompress(payload_slice, &dict_slice));
-                dict_loaded = true;
-            } else if (!payload_is_compressed &&
-                       payload_slice.size == static_cast<size_t>(uncompressed_size)) {
-                // Use cached uncompressed dictionary data
-                memcpy(dict_data.get(), payload_slice.data, payload_slice.size);
                 dict_loaded = true;
             }
 
@@ -463,7 +440,7 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::_decode_dict_page() {
             if (header->compressed_page_size > 0) {
                 should_cache_decompressed =
                         (static_cast<double>(header->uncompressed_page_size) <=
-                         static_cast<double>(_ctx.parquet_page_cache_decompress_threshold) *
+                         static_cast<double>(config::parquet_page_cache_decompress_threshold) *
                                  static_cast<double>(header->compressed_page_size));
             }
 
@@ -473,11 +450,13 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::_decode_dict_page() {
                 if (should_cache_decompressed) {
                     // Cache the decompressed dictionary page
                     _insert_page_into_cache(empty_levels, dict_slice);
+                    _chunk_statistics.page_cache_decompressed_write_counter += 1;
                 } else {
-                    if (_ctx.enable_parquet_cache_compressed_pages) {
+                    if (config::enable_parquet_cache_compressed_pages) {
                         // Cache the compressed dictionary page
                         _insert_page_into_cache(empty_levels,
                                                 Slice(compressed_data.data, compressed_data.size));
+                        _chunk_statistics.page_cache_compressed_write_counter += 1;
                     }
                 }
             }
@@ -493,6 +472,7 @@ Status ColumnChunkReader<IN_COLLECTION, OFFSET_INDEX>::_decode_dict_page() {
                 std::vector<uint8_t> empty_levels;
                 Slice payload(dict_data.get(), uncompressed_size);
                 _insert_page_into_cache(empty_levels, payload);
+                _chunk_statistics.page_cache_decompressed_write_counter += 1;
             }
         }
     }

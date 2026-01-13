@@ -65,6 +65,8 @@ struct ColumnChunkReaderStatistics {
     // total pages read (from cache or file)
     int64_t page_read_counter = 0;
     int64_t page_cache_write_counter = 0;
+    int64_t page_cache_compressed_write_counter = 0;
+    int64_t page_cache_decompressed_write_counter = 0;
     // number of cache hits (either compressed or decompressed)
     int64_t page_cache_hit_counter = 0;
     int64_t page_cache_missing_counter = 0;
@@ -88,6 +90,8 @@ struct ColumnChunkReaderStatistics {
         // total pages read (from cache or file)
         int64_t page_read_counter = 0;
         int64_t page_cache_write_counter = 0;
+        int64_t page_cache_compressed_write_counter = 0;
+        int64_t page_cache_decompressed_write_counter = 0;
         // number of cache hits (either compressed or decompressed)
         int64_t page_cache_hit_counter = 0;
         // per-hit breakdown
@@ -178,6 +182,10 @@ public:
         _chunk_statistics.page_read_counter += _page_reader->page_statistics().page_read_counter;
         _chunk_statistics.page_cache_write_counter +=
                 _page_reader->page_statistics().page_cache_write_counter;
+        _chunk_statistics.page_cache_compressed_write_counter +=
+                _page_reader->page_statistics().page_cache_compressed_write_counter;
+        _chunk_statistics.page_cache_decompressed_write_counter +=
+                _page_reader->page_statistics().page_cache_decompressed_write_counter;
         _chunk_statistics.page_cache_hit_counter +=
                 _page_reader->page_statistics().page_cache_hit_counter;
         _chunk_statistics.page_cache_missing_counter +=

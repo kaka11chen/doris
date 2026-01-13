@@ -27,6 +27,7 @@
 #include "common/config.h"
 #include "io/fs/buffered_reader.h"
 #include "olap/page_cache.h"
+#include "parquet_common.h"
 #include "util/runtime_profile.h"
 #include "util/slice.h"
 #include "util/thrift_util.h"
@@ -41,10 +42,46 @@ namespace doris::vectorized {
 #include "common/compile_check_begin.h"
 static constexpr size_t INIT_PAGE_HEADER_SIZE = 128;
 
+// // Check if the file was created by a version that always marks pages as compressed
+// // regardless of the actual compression state (parquet-cpp < 2.0.0)
+// static bool _is_always_compressed(const ParquetPageReadContext& ctx) {
+//     if (ctx.created_by.empty()) {
+//         return false;
+//     }
+    
+//     // Parse the version string
+//     std::unique_ptr<ParsedVersion> parsed_version;
+//     Status status = VersionParser::parse(ctx.created_by, &parsed_version);
+//     if (!status.ok()) {
+//         return false;
+//     }
+    
+//     // Check if it's parquet-cpp
+//     if (parsed_version->application() != "parquet-cpp") {
+//         return false;
+//     }
+    
+//     // Check if version < 2.0.0
+//     if (!parsed_version->version().has_value()) {
+//         return false;
+//     }
+    
+//     std::unique_ptr<SemanticVersion> semantic_version;
+//     status = SemanticVersion::parse(parsed_version->version().value(), &semantic_version);
+//     if (!status.ok()) {
+//         return false;
+//     }
+    
+//     // parquet-cpp versions < 2.0.0 always report compressed
+//     static const SemanticVersion PARQUET_CPP_FIXED_VERSION(2, 0, 0);
+//     return semantic_version->compare_to(PARQUET_CPP_FIXED_VERSION) < 0;
+// }
+
 template <bool IN_COLLECTION, bool OFFSET_INDEX>
 PageReader<IN_COLLECTION, OFFSET_INDEX>::PageReader(io::BufferedStreamReader* reader,
                                                     io::IOContext* io_ctx, uint64_t offset,
                                                     uint64_t length, size_t total_rows,
+                                                    const tparquet::ColumnMetaData& metadata,
                                                     const tparquet::OffsetIndex* offset_index,
                                                     const ParquetPageReadContext& ctx)
         : _reader(reader),
@@ -53,6 +90,7 @@ PageReader<IN_COLLECTION, OFFSET_INDEX>::PageReader(io::BufferedStreamReader* re
           _start_offset(offset),
           _end_offset(offset + length),
           _total_rows(total_rows),
+          _metadata(metadata),
           _offset_index(offset_index),
           _ctx(ctx) {
     _next_header_offset = _offset;
@@ -111,36 +149,46 @@ Status PageReader<IN_COLLECTION, OFFSET_INDEX>::parse_page_header() {
             _page_statistics.page_cache_hit_counter += 1;
             // Detect whether the cached payload is compressed or decompressed and record
             // the appropriate counter. Cached layout is: header | optional levels | payload
-            size_t levels_size = 0;
-            if (_cur_page_header.__isset.data_page_header_v2) {
-                const tparquet::DataPageHeaderV2& header_v2 = _cur_page_header.data_page_header_v2;
-                levels_size = header_v2.repetition_levels_byte_length +
-                              header_v2.definition_levels_byte_length;
+            
+            // Determine if payload is compressed using V2 is_compressed field if available
+            // bool payload_is_compressed = true;
+            // if (_cur_page_header.type == tparquet::PageType::DATA_PAGE_V2) {
+            //     const auto& page_header_v2 = _cur_page_header.data_page_header_v2;
+            //     if (page_header_v2.__isset.is_compressed) {
+            //         payload_is_compressed = page_header_v2.is_compressed;
+            //     }
+            // }
+
+            // // ARROW-17100: [C++][Parquet] Fix backwards compatibility for ParquetV2 data pages written prior to 3.0.0 per ARROW-10353 #13665
+            // // https://github.com/apache/arrow/pull/13665/files
+            // // Prior to parquet-cpp version 2.0.0, is_compressed was always set to false in column headers,
+            // // even if compression was used. See ARROW-17100.
+            // bool always_compressed = _is_always_compressed(_ctx);
+            // payload_is_compressed |= always_compressed;
+            
+            // // Apply codec check: if codec is UNCOMPRESSED, payload cannot be compressed
+            // payload_is_compressed = payload_is_compressed && 
+            //                         (_metadata.codec != tparquet::CompressionCodec::UNCOMPRESSED);
+            
+            // // Save the computed result for use by ColumnChunkReader
+            // _payload_is_compressed = payload_is_compressed;
+            
+
+            bool is_cache_payload_decompressed = true;
+            if (_cur_page_header.compressed_page_size > 0) {
+                is_cache_payload_decompressed = (_metadata.codec == tparquet::CompressionCodec::UNCOMPRESSED) ||
+                            (static_cast<double>(_cur_page_header.uncompressed_page_size) <=
+                             static_cast<double>(config::parquet_page_cache_decompress_threshold) *
+                                     static_cast<double>(_cur_page_header.compressed_page_size));
             }
-            size_t payload_size = 0;
-            if (s.size > real_header_size + levels_size) {
-                payload_size = s.size - real_header_size - levels_size;
-            }
-            bool payload_is_compressed = false;
-            if (_cur_page_header.__isset.data_page_header_v2) {
-                payload_is_compressed =
-                        (!(payload_size ==
-                           static_cast<size_t>(_cur_page_header.uncompressed_page_size) -
-                                   levels_size)) &&
-                        (payload_size ==
-                         static_cast<size_t>(_cur_page_header.compressed_page_size) - levels_size);
-            } else if (_cur_page_header.__isset.data_page_header) {
-                payload_is_compressed =
-                        (!(payload_size ==
-                           static_cast<size_t>(_cur_page_header.uncompressed_page_size))) &&
-                        (payload_size ==
-                         static_cast<size_t>(_cur_page_header.compressed_page_size));
-            }
-            if (payload_is_compressed) {
-                _page_statistics.page_cache_compressed_hit_counter += 1;
-            } else {
+
+            if (is_cache_payload_decompressed) {
                 _page_statistics.page_cache_decompressed_hit_counter += 1;
+            } else {
+                _page_statistics.page_cache_compressed_hit_counter += 1;
             }
+
+            _is_cache_payload_decompressed = is_cache_payload_decompressed;
 
             if constexpr (OFFSET_INDEX == false) {
                 if (is_header_v2()) {

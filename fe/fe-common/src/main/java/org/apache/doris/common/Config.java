@@ -2693,6 +2693,15 @@ public class Config extends ConfigBase {
             "Default hive file format for creating table."})
     public static String hive_default_file_format = "orc";
 
+    @ConfField(mutable = true, masterOnly = false, description = {
+            "Hive 写入时使用的临时 staging 目录路径前缀。数据会先写入此目录，事务提交后再移动到表目录。"
+                    + "路径会自动追加用户名，例如：/tmp/.doris_staging -> /tmp/.doris_staging/user",
+            "The staging directory path prefix used for Hive writes. Data is first written to this directory, "
+                    + "then moved to the table directory after transaction commit. "
+                    + "Username will be automatically appended to the path, "
+                    + "e.g., /tmp/.doris_staging -> /tmp/.doris_staging/user"})
+    public static String hive_staging_dir = "/tmp/.doris_staging";
+
     @ConfField
     public static int statistics_sql_parallel_exec_instance_num = 1;
 

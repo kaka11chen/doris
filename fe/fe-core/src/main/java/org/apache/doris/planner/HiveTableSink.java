@@ -23,6 +23,7 @@ package org.apache.doris.planner;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.util.LocationPath;
 import org.apache.doris.datasource.hive.HMSExternalCatalog;
 import org.apache.doris.datasource.hive.HMSExternalTable;
@@ -168,7 +169,12 @@ public class HiveTableSink extends BaseExternalTableDataSink {
 
     private String createTempPath(String location) {
         String user = ConnectContext.get().getCurrentUserIdentity().getUser();
-        return LocationPath.getTempWritePath(location, "/tmp/.doris_staging/" + user);
+        String stagingDir = Config.hive_staging_dir;
+        // Ensure the staging directory path ends with user name
+        String stagingPath = stagingDir.endsWith("/")
+                ? stagingDir + user
+                : stagingDir + "/" + user;
+        return LocationPath.getTempWritePath(location, stagingPath);
     }
 
     private void setCompressType(THiveTableSink tSink, TFileFormatType formatType) {

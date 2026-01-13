@@ -209,6 +209,9 @@ public:
                     iterator_pair) {
         _row_id_column_iterator_pair = iterator_pair;
     }
+    void set_iceberg_rowid_params(const std::string& file_path, int32_t partition_spec_id,
+                                  const std::string& partition_data_json,
+                                  int row_id_column_pos);
 
     static bool inline is_hive1_col_name(const orc::Type* orc_type_ptr) {
         for (uint64_t idx = 0; idx < orc_type_ptr->getSubtypeCount(); idx++) {
@@ -226,6 +229,14 @@ protected:
     void _collect_profile_before_close() override;
 
 private:
+    struct IcebergRowIdParams {
+        bool enabled = false;
+        std::string file_path;
+        int32_t partition_spec_id = 0;
+        std::string partition_data_json;
+        int row_id_column_pos = -1;
+    };
+
     struct OrcProfile {
         RuntimeProfile::Counter* read_time = nullptr;
         RuntimeProfile::Counter* read_calls = nullptr;
@@ -605,6 +616,7 @@ private:
     }
 
     Status _fill_row_id_columns(Block* block);
+    Status _append_iceberg_rowid_column(Block* block, size_t rows, int64_t start_row);
 
     bool _seek_to_read_one_line() {
         if (_read_by_rows) {
@@ -716,6 +728,7 @@ private:
 
     std::pair<std::shared_ptr<segment_v2::RowIdColumnIteratorV2>, int>
             _row_id_column_iterator_pair = {nullptr, -1};
+    IcebergRowIdParams _iceberg_rowid_params;
 
     // Through this node, you can find the file column based on the table column.
     std::shared_ptr<TableSchemaChangeHelper::Node> _table_info_node_ptr =

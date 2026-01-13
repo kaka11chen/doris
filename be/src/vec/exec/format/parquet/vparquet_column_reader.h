@@ -68,6 +68,8 @@ public:
                   read_page_header_time(0),
                   page_read_counter(0),
                   page_cache_write_counter(0),
+                  page_cache_compressed_write_counter(0),
+                  page_cache_decompressed_write_counter(0),
                   page_cache_hit_counter(0),
                   page_cache_missing_counter(0),
                   page_cache_compressed_hit_counter(0),
@@ -87,6 +89,8 @@ public:
                   read_page_header_time(cs.read_page_header_time),
                   page_read_counter(cs.page_read_counter),
                   page_cache_write_counter(cs.page_cache_write_counter),
+                  page_cache_compressed_write_counter(cs.page_cache_compressed_write_counter),
+                  page_cache_decompressed_write_counter(cs.page_cache_decompressed_write_counter),
                   page_cache_hit_counter(cs.page_cache_hit_counter),
                   page_cache_missing_counter(cs.page_cache_missing_counter),
                   page_cache_compressed_hit_counter(cs.page_cache_compressed_hit_counter),
@@ -105,6 +109,8 @@ public:
         int64_t read_page_header_time;
         int64_t page_read_counter;
         int64_t page_cache_write_counter;
+        int64_t page_cache_compressed_write_counter;
+        int64_t page_cache_decompressed_write_counter;
         int64_t page_cache_hit_counter;
         int64_t page_cache_missing_counter;
         int64_t page_cache_compressed_hit_counter;
@@ -124,6 +130,10 @@ public:
             read_page_header_time += col_statistics.read_page_header_time;
             page_read_counter += col_statistics.page_read_counter;
             page_cache_write_counter += col_statistics.page_cache_write_counter;
+            page_cache_compressed_write_counter +=
+                    col_statistics.page_cache_compressed_write_counter;
+            page_cache_decompressed_write_counter +=
+                    col_statistics.page_cache_decompressed_write_counter;
             page_cache_hit_counter += col_statistics.page_cache_hit_counter;
             page_cache_missing_counter += col_statistics.page_cache_missing_counter;
             page_cache_compressed_hit_counter += col_statistics.page_cache_compressed_hit_counter;
@@ -158,7 +168,7 @@ public:
                          std::unordered_map<int, tparquet::OffsetIndex>& col_offsets,
                          bool in_collection = false, const std::set<uint64_t>& column_ids = {},
                          const std::set<uint64_t>& filter_column_ids = {},
-                         RuntimeState* state = nullptr);
+                         RuntimeState* state = nullptr, const std::string& created_by = "");
     virtual const std::vector<level_t>& get_rep_level() const = 0;
     virtual const std::vector<level_t>& get_def_level() const = 0;
     virtual ColumnStatistics column_statistics() = 0;
@@ -196,7 +206,7 @@ public:
               _offset_index(offset_index) {}
     ~ScalarColumnReader() override { close(); }
     Status init(io::FileReaderSPtr file, FieldSchema* field, size_t max_buf_size,
-                RuntimeState* state);
+                RuntimeState* state, const std::string& created_by = "");
     Status read_column_data(ColumnPtr& doris_column, const DataTypePtr& type,
                             const std::shared_ptr<TableSchemaChangeHelper::Node>& root_node,
                             FilterMap& filter_map, size_t batch_size, size_t* read_rows, bool* eof,

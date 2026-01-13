@@ -18,6 +18,7 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include "common/config.h"
 #include "io/fs/buffered_reader.h"
 #include "olap/page_cache.h"
 #include "runtime/exec_env.h"
@@ -62,8 +63,6 @@ TEST(ParquetPageCacheTest, CacheHitReturnsDecompressedPayload) {
 
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0; // ensure decompressed pages are cached
-    ctx.enable_parquet_cache_compressed_pages = false;
 
     // construct thrift PageHeader (uncompressed payload) and payload
     tparquet::PageHeader header;
@@ -145,8 +144,11 @@ TEST(ParquetPageCacheTest, DecompressedPageInsertedByColumnChunkReader) {
 
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0; // ensure decompressed pages are cached
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // ensure decompressed pages are cached via BE config
+    double old_thresh = config::parquet_page_cache_decompress_threshold;
+    bool old_enable_compressed = config::enable_parquet_cache_compressed_pages;
+    config::parquet_page_cache_decompress_threshold = 100.0;
+    config::enable_parquet_cache_compressed_pages = false;
 
     // construct uncompressed header + payload in file buffer
     tparquet::PageHeader header;
@@ -204,6 +206,9 @@ TEST(ParquetPageCacheTest, DecompressedPageInsertedByColumnChunkReader) {
     //     delete _cache_ptr;
     //     CacheManager::instance()->clear_for_test();
     // }
+    // restore config
+    config::parquet_page_cache_decompress_threshold = old_thresh;
+    config::enable_parquet_cache_compressed_pages = old_enable_compressed;
 }
 
 TEST(ParquetPageCacheTest, V2LevelsPreservedInCache) {
@@ -211,8 +216,11 @@ TEST(ParquetPageCacheTest, V2LevelsPreservedInCache) {
 
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0; // ensure decompressed pages are cached
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // ensure decompressed pages are cached via BE config
+    double old_thresh = config::parquet_page_cache_decompress_threshold;
+    bool old_enable_compressed = config::enable_parquet_cache_compressed_pages;
+    config::parquet_page_cache_decompress_threshold = 100.0;
+    config::enable_parquet_cache_compressed_pages = false;
 
     // construct v2 header + levels + payload in file buffer (uncompressed)
     tparquet::PageHeader header;
@@ -294,13 +302,16 @@ TEST(ParquetPageCacheTest, V2LevelsPreservedInCache) {
     //     delete _cache_ptr;
     //     CacheManager::instance()->clear_for_test();
     // }
+    // restore config
+    config::parquet_page_cache_decompress_threshold = old_thresh;
+    config::enable_parquet_cache_compressed_pages = old_enable_compressed;
 }
 
 TEST(ParquetPageCacheTest, CompressedV1PageCachedAndHit) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0;
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // Note: parquet_page_cache_decompress_threshold and enable_parquet_cache_compressed_pages
+    // are now BE config variables, not context fields
 
     // construct compressed v1 header + compressed payload in file buffer
     tparquet::PageHeader header;
@@ -365,8 +376,8 @@ TEST(ParquetPageCacheTest, CompressedV1PageCachedAndHit) {
 TEST(ParquetPageCacheTest, CompressedV2LevelsPreservedInCache) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0;
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // Note: parquet_page_cache_decompress_threshold and enable_parquet_cache_compressed_pages
+    // are now BE config variables, not context fields
 
     // construct v2 header + levels + compressed payload in file buffer
     tparquet::PageHeader header;
@@ -453,8 +464,8 @@ TEST(ParquetPageCacheTest, CompressedV2LevelsPreservedInCache) {
 TEST(ParquetPageCacheTest, MultiPagesMixedV1V2CacheHit) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0;
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // Note: parquet_page_cache_decompress_threshold and enable_parquet_cache_compressed_pages
+    // are now BE config variables, not context fields
 
     // Prepare a v1 uncompressed page and a v2 uncompressed page and insert both into cache
     std::string path = "test_multi_pages_file";
@@ -568,8 +579,8 @@ TEST(ParquetPageCacheTest, MultiPagesMixedV1V2CacheHit) {
 TEST(ParquetPageCacheTest, CacheMissThenHit) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0;
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // Note: parquet_page_cache_decompress_threshold and enable_parquet_cache_compressed_pages
+    // are now BE config variables, not context fields
 
     // uncompressed v1 page
     tparquet::PageHeader header;
@@ -624,7 +635,7 @@ TEST(ParquetPageCacheTest, CacheMissThenHit) {
 TEST(ParquetPageCacheTest, DecompressThresholdCachesCompressed) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.enable_parquet_cache_compressed_pages = true;
+    // Note: enable_parquet_cache_compressed_pages is now a BE config variable, not a context field
 
     // prepare a compressible payload (lots of zeros)
     std::vector<uint8_t> payload(1024, 0);
@@ -667,7 +678,10 @@ TEST(ParquetPageCacheTest, DecompressThresholdCachesCompressed) {
     fs.definition_level = 0;
 
     // Case: very small threshold -> cache the compressed payload (smaller footprint)
-    ctx.parquet_page_cache_decompress_threshold = 0.1;
+    double old_thresh = config::parquet_page_cache_decompress_threshold;
+    bool old_enable_compressed = config::enable_parquet_cache_compressed_pages;
+    config::parquet_page_cache_decompress_threshold = 0.1;
+    config::enable_parquet_cache_compressed_pages = true;
     ColumnChunkReader<false, false> ccr_small_thresh(&reader, &cc, &fs, nullptr, 0, nullptr, ctx);
     ASSERT_TRUE(ccr_small_thresh.init().ok());
     // ASSERT_TRUE(ccr_small_thresh.next_page().ok());
@@ -687,12 +701,16 @@ TEST(ParquetPageCacheTest, DecompressThresholdCachesCompressed) {
     size_t header_size = header_bytes.size();
     size_t payload_in_cache_size = cached_small.size - header_size; // no levels here
     ASSERT_EQ(payload_in_cache_size, compressed_fast.size());
+
+    // restore config
+    config::parquet_page_cache_decompress_threshold = old_thresh;
+    config::enable_parquet_cache_compressed_pages = old_enable_compressed;
 }
 
 TEST(ParquetPageCacheTest, DecompressThresholdCachesDecompressed) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.enable_parquet_cache_compressed_pages = false;
+    // Note: enable_parquet_cache_compressed_pages is now a BE config variable, not a context field
 
     // prepare a compressible payload (lots of zeros)
     std::vector<uint8_t> payload(1024, 0);
@@ -735,7 +753,10 @@ TEST(ParquetPageCacheTest, DecompressThresholdCachesDecompressed) {
     fs.definition_level = 0;
 
     // Case: very large threshold -> cache decompressed payload
-    ctx.parquet_page_cache_decompress_threshold = 100.0;
+    double old_thresh = config::parquet_page_cache_decompress_threshold;
+    bool old_enable_compressed = config::enable_parquet_cache_compressed_pages;
+    config::parquet_page_cache_decompress_threshold = 100.0;
+    config::enable_parquet_cache_compressed_pages = false;
     ColumnChunkReader<false, false> ccr_large_thresh(&reader, &cc, &fs, nullptr, 0, nullptr, ctx);
     ASSERT_TRUE(ccr_large_thresh.init().ok());
     // ASSERT_TRUE(ccr_large_thresh.next_page().ok());
@@ -761,13 +782,18 @@ TEST(ParquetPageCacheTest, DecompressThresholdCachesDecompressed) {
     // ASSERT_TRUE(ccr_check.next_page().ok());
     ASSERT_TRUE(ccr_check.load_page_data().ok());
     EXPECT_EQ(ccr_check.statistics().page_cache_hit_counter, 1);
+    // restore config
+    config::parquet_page_cache_decompress_threshold = old_thresh;
+    config::enable_parquet_cache_compressed_pages = old_enable_compressed;
 }
 
 TEST(ParquetPageCacheTest, MultipleReadersShareCachedEntry) {
     ParquetPageReadContext ctx;
     ctx.enable_parquet_file_page_cache = true;
-    ctx.parquet_page_cache_decompress_threshold = 100.0;
-    ctx.enable_parquet_cache_compressed_pages = false;
+    double old_thresh = config::parquet_page_cache_decompress_threshold;
+    bool old_enable_compressed = config::enable_parquet_cache_compressed_pages;
+    config::parquet_page_cache_decompress_threshold = 100.0;
+    config::enable_parquet_cache_compressed_pages = false;
 
     // Create a v2 cached page and then instantiate multiple readers that hit the cache
     std::string path = "test_shared_handles";
@@ -827,4 +853,7 @@ TEST(ParquetPageCacheTest, MultipleReadersShareCachedEntry) {
         ASSERT_EQ(rep.size, rl);
         ASSERT_EQ(def.size, dl);
     }
+    // restore config
+    config::parquet_page_cache_decompress_threshold = old_thresh;
+    config::enable_parquet_cache_compressed_pages = old_enable_compressed;
 }

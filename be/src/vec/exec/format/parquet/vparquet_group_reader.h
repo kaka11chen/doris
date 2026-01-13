@@ -70,6 +70,13 @@ namespace doris::vectorized {
 
 class RowGroupReader : public ProfileCollector {
 public:
+    struct IcebergRowIdParams {
+        bool enabled = false;
+        std::string file_path;
+        int32_t partition_spec_id = 0;
+        std::string partition_data_json;
+        int row_id_column_pos = -1;
+    };
     std::shared_ptr<TableSchemaChangeHelper::Node> _table_info_node_ptr;
     static const std::vector<int64_t> NO_DELETE;
 
@@ -166,7 +173,8 @@ public:
                    const PositionDeleteContext& position_delete_ctx,
                    const LazyReadContext& lazy_read_ctx, RuntimeState* state,
                    const std::set<uint64_t>& column_ids,
-                   const std::set<uint64_t>& filter_column_ids);
+                   const std::set<uint64_t>& filter_column_ids,
+                   const std::string& created_by = "");
 
     ~RowGroupReader();
     Status init(const FieldDescriptor& schema, RowRanges& row_ranges,
@@ -188,6 +196,10 @@ public:
             const std::pair<std::shared_ptr<segment_v2::RowIdColumnIteratorV2>, int>&
                     iterator_pair) {
         _row_id_column_iterator_pair = iterator_pair;
+    }
+
+    void set_iceberg_rowid_params(const IcebergRowIdParams& params) {
+        _iceberg_rowid_params = params;
     }
 
     void set_current_row_group_idx(RowGroupIndex row_group_idx) {
@@ -239,6 +251,7 @@ private:
 
     Status _get_current_batch_row_id(size_t read_rows);
     Status _fill_row_id_columns(Block* block, size_t read_rows, bool is_current_row_ids);
+    Status _append_iceberg_rowid_column(Block* block, size_t read_rows, bool is_current_row_ids);
 
     io::FileReaderSPtr _file_reader;
     std::unordered_map<std::string, std::unique_ptr<ParquetColumnReader>>
@@ -274,6 +287,7 @@ private:
     std::shared_ptr<ObjectPool> _obj_pool;
     const std::set<uint64_t>& _column_ids;
     const std::set<uint64_t>& _filter_column_ids;
+    std::string _created_by; // Parquet file's created_by field
     bool _is_row_group_filtered = false;
 
     RowGroupIndex _current_row_group_idx {0, 0, 0};
@@ -282,6 +296,7 @@ private:
     std::vector<rowid_t> _current_batch_row_ids;
 
     std::unordered_map<std::string, uint32_t>* _col_name_to_block_idx = nullptr;
+    IcebergRowIdParams _iceberg_rowid_params;
 };
 #include "common/compile_check_end.h"
 

@@ -81,6 +81,10 @@ Status ByteArrayDictDecoder::read_dict_values_to_column(MutableColumnPtr& doris_
 MutableColumnPtr ByteArrayDictDecoder::convert_dict_column_to_string_column(
         const ColumnInt32* dict_column) {
     auto res = ColumnString::create();
+    if (_dict_items.empty()) {
+        res->insert_many_defaults(dict_column->size());
+        return res;
+    }
     std::vector<StringRef> dict_values(dict_column->size());
     const auto& data = dict_column->get_data();
     for (size_t i = 0; i < dict_column->size(); ++i) {
