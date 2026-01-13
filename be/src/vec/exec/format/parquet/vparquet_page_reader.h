@@ -196,7 +196,7 @@ public:
     PageStatistics& page_statistics() { return _page_statistics; }
 
     bool is_header_v2() { return _cur_page_header.__isset.data_page_header_v2; }
-
+    
     // Returns whether the current page's cache payload is decompressed
     bool is_cache_payload_decompressed() const { return _is_cache_payload_decompressed; }
 

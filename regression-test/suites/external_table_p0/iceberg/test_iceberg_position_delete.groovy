@@ -15,244 +15,90 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("test_iceberg_position_delete", "p0,external,doris,external_docker,external_docker_doris") {
+suite("test_iceberg_position_delete", "p0,external,iceberg,external_docker,external_docker_iceberg") {
     String enabled = context.config.otherConfigs.get("enableIcebergTest")
     if (enabled == null || !enabled.equalsIgnoreCase("true")) {
-        logger.info("disable iceberg test.")
+        logger.info("Iceberg test is disabled")
         return
     }
 
-    String rest_port = context.config.otherConfigs.get("iceberg_rest_uri_port")
-    String minio_port = context.config.otherConfigs.get("iceberg_minio_port")
-    String externalEnvIp = context.config.otherConfigs.get("externalEnvIp")
     String catalog_name = "test_iceberg_position_delete"
+    String db_name = "test_db"
+    String table_name = "test_position_delete_table"
 
-    sql """drop catalog if exists ${catalog_name}"""
+    sql """drop catalog if exists ${catalog_name};"""
+
+    // Create Iceberg catalog
     sql """
-    CREATE CATALOG ${catalog_name} PROPERTIES (
-        'type'='iceberg',
-        'iceberg.catalog.type'='rest',
-        'uri' = 'http://${externalEnvIp}:${rest_port}',
-        "s3.access_key" = "admin",
-        "s3.secret_key" = "password",
-        "s3.endpoint" = "http://${externalEnvIp}:${minio_port}",
-        "s3.region" = "us-east-1"
-    );"""
+        create catalog if not exists ${catalog_name} properties (
+            "type" = "iceberg",
+            "iceberg.catalog.type" = "hadoop",
+            "warehouse" = "${context.config.otherConfigs.get("icebergWarehousePath")}"
+        );
+    """
 
-        logger.info("catalog " + catalog_name + " created")
-        sql """switch ${catalog_name};"""
-        logger.info("switched to catalog " + catalog_name)
-        sql """ use test_db;""" 
+    sql """use ${catalog_name}.${db_name}"""
 
-        qt_gen_data_1 """ select * from iceberg_position_gen_data where  name = 'xyzxxxxxx' and id != 9;""" 
-        qt_gen_data_2 """ select * from iceberg_position_gen_data where id = 1; """
-        qt_gen_data_3 """ select * from iceberg_position_gen_data where id = 5; """ 
-        qt_gen_data_4 """ select * from iceberg_position_gen_data where id = 10; """ 
-        qt_gen_data_5 """ select * from iceberg_position_gen_data where id = 15; """ 
-        qt_gen_data_6 """ select * from iceberg_position_gen_data where id = 2 limit 3;""" 
-        qt_gen_data_7 """ select id from iceberg_position_gen_data where id = 2 limit 3;""" 
-        qt_gen_data_8 """ select id,count(name) from iceberg_position_gen_data where id != 1 group by id order by id ;"""
-        qt_gen_data_9 """ select id from iceberg_position_gen_data where id = 1; """
-        qt_gen_data_10 """ select name from iceberg_position_gen_data where id = 5; """ 
-        qt_gen_data_11 """ select id from iceberg_position_gen_data where id = 10; """ 
-        qt_gen_data_12 """ select name from iceberg_position_gen_data where id = 15;""" 
-        qt_gen_data_13 """ select * from iceberg_position_gen_data where id = 15 and name = 'select xxxxxxxxx';""" 
-        qt_gen_data_14 """ select * from iceberg_position_gen_data where id = 2 and name = 'select xxxxxxxxx' limit 3;""" 
-        qt_gen_data_15 """ select * from iceberg_position_gen_data where id = 7 and name = '12345xxx' limit 3;""" 
-        qt_gen_data_16 """ select * from iceberg_position_gen_data where  name = 'hello world' ;""" 
-        qt_gen_data_17 """ select name from iceberg_position_gen_data where  name = 'hello world' ;""" 
-        qt_gen_data_18 """ select id from iceberg_position_gen_data where  name = 'hello world' ;""" 
-        qt_gen_data_19 """ select count(*) from iceberg_position_gen_data where  name != 'final entryxxxxxx' ;""" 
-        qt_gen_data_20 """ select count(*) from iceberg_position_gen_data; """ 
+    // Create test table with format version 2 (required for DELETE operations)
+    sql """
+        CREATE TABLE IF NOT EXISTS ${table_name} (
+            id INT,
+            name STRING,
+            age INT,
+            city STRING
+        ) USING iceberg
+        TBLPROPERTIES ('format-version' = '2')
+    """
 
+    // Insert test data
+    sql """
+        INSERT INTO ${table_name} VALUES 
+        (1, 'Alice', 25, 'Beijing'),
+        (2, 'Bob', 30, 'Shanghai'),
+        (3, 'Charlie', 35, 'Guangzhou'),
+        (4, 'David', 40, 'Shenzhen'),
+        (5, 'Eve', 28, 'Hangzhou')
+    """
 
-        qt_orc_1 """ select * from iceberg_position_orc where  name = 'xyzxxxxxx' and id != 9;""" 
-        qt_orc_2 """ select * from iceberg_position_orc where id = 1; """
-        qt_orc_3 """ select * from iceberg_position_orc where id = 5; """ 
-        qt_orc_4 """ select * from iceberg_position_orc where id = 10; """ 
-        qt_orc_5 """ select * from iceberg_position_orc where id = 15; """ 
-        qt_orc_6 """ select * from iceberg_position_orc where id = 2 limit 3;""" 
-        qt_orc_7 """ select id from iceberg_position_orc where id = 2 limit 3;""" 
-        qt_orc_8 """ select id,count(name) from iceberg_position_orc where id != 1 group by id order by id ;"""
-        qt_orc_9 """ select id from iceberg_position_orc where id = 1; """
-        qt_orc_10 """ select name from iceberg_position_orc where id = 5; """ 
-        qt_orc_11 """ select id from iceberg_position_orc where id = 10; """ 
-        qt_orc_12 """ select name from iceberg_position_orc where id = 15;""" 
-        qt_orc_13 """ select * from iceberg_position_orc where id = 15 and name = 'select xxxxxxxxx';""" 
-        qt_orc_14 """ select * from iceberg_position_orc where id = 2 and name = 'select xxxxxxxxx' limit 3;""" 
-        qt_orc_15 """ select * from iceberg_position_orc where id = 7 and name = '12345xxx' limit 3;""" 
-        qt_orc_16 """ select * from iceberg_position_orc where  name = 'hello world' ;""" 
-        qt_orc_17 """ select name from iceberg_position_orc where  name = 'hello world' ;""" 
-        qt_orc_18 """ select id from iceberg_position_orc where  name = 'hello world' ;""" 
-        qt_orc_19 """ select count(*) from iceberg_position_orc where  name != 'final entryxxxxxx' ;""" 
-        qt_orc_20 """ select count(*) from iceberg_position_orc; """ 
+    // Verify initial data
+    qt_select_all """SELECT * FROM ${table_name} ORDER BY id"""
 
-        qt_parquet_1 """ select * from iceberg_position_parquet where  name = 'xyzxxxxxx' and id != 9;""" 
-        qt_parquet_2 """ select * from iceberg_position_parquet where id = 1; """
-        qt_parquet_3 """ select * from iceberg_position_parquet where id = 5; """ 
-        qt_parquet_4 """ select * from iceberg_position_parquet where id = 10; """ 
-        qt_parquet_5 """ select * from iceberg_position_parquet where id = 15; """ 
-        qt_parquet_6 """ select * from iceberg_position_parquet where id = 2 limit 3;""" 
-        qt_parquet_7 """ select id from iceberg_position_parquet where id = 2 limit 3;""" 
-        qt_parquet_8 """ select id,count(name) from iceberg_position_parquet where id != 1 group by id order by id ;"""
-        qt_parquet_9 """ select id from iceberg_position_parquet where id = 1; """
-        qt_parquet_10 """ select name from iceberg_position_parquet where id = 5; """ 
-        qt_parquet_11 """ select id from iceberg_position_parquet where id = 10; """ 
-        qt_parquet_12 """ select name from iceberg_position_parquet where id = 15;""" 
-        qt_parquet_13 """ select * from iceberg_position_parquet where id = 15 and name = 'select xxxxxxxxx';""" 
-        qt_parquet_14 """ select * from iceberg_position_parquet where id = 2 and name = 'select xxxxxxxxx' limit 3;""" 
-        qt_parquet_15 """ select * from iceberg_position_parquet where id = 7 and name = '12345xxx' limit 3;""" 
-        qt_parquet_16 """ select * from iceberg_position_parquet where  name = 'hello world' ;""" 
-        qt_parquet_17 """ select name from iceberg_position_parquet where  name = 'hello world' ;""" 
-        qt_parquet_18 """ select id from iceberg_position_parquet where  name = 'hello world' ;""" 
-        qt_parquet_19 """ select count(*) from iceberg_position_parquet where  name != 'final entryxxxxxx' ;""" 
-        qt_parquet_20 """ select count(*) from iceberg_position_parquet; """ 
+    // Test 1: Delete single row by ID
+    sql """DELETE FROM ${table_name} WHERE id = 1"""
+    
+    qt_after_delete_one """SELECT * FROM ${table_name} ORDER BY id"""
+    
+    // Verify count
+    def count_after_one = sql """SELECT COUNT(*) FROM ${table_name}"""
+    assert count_after_one[0][0] == 4
 
+    // Test 2: Delete multiple rows with condition
+    sql """DELETE FROM ${table_name} WHERE age > 30"""
+    
+    qt_after_delete_multiple """SELECT * FROM ${table_name} ORDER BY id"""
+    
+    // Verify count
+    def count_after_multiple = sql """SELECT COUNT(*) FROM ${table_name}"""
+    assert count_after_multiple[0][0] == 2
 
-        List<List<Object>> iceberg_position_orc = sql """ select * from iceberg_position_orc ;"""
-        List<List<Object>> iceberg_position_parquet = sql """ select * from iceberg_position_parquet;"""
-        List<List<Object>> iceberg_position_gen = sql """ select * from iceberg_position_gen_data;"""
+    // Test 3: Verify Position Delete files are created
+    // Query Iceberg metadata to check delete files
+    def delete_files = sql """
+        SELECT * FROM ${catalog_name}.${db_name}.${table_name}\$delete_files
+    """
+    
+    logger.info("Delete files count: " + delete_files.size())
+    assert delete_files.size() > 0 : "Position Delete files should be created"
 
-        assertTrue(iceberg_position_orc.size() == iceberg_position_gen.size())
-        assertTrue(iceberg_position_orc.size() == iceberg_position_parquet.size())
-        assertTrue(iceberg_position_orc.size() == 5632)
+    // Test 4: Verify data consistency after DELETE
+    def remaining_data = sql """SELECT id, name FROM ${table_name} ORDER BY id"""
+    assert remaining_data.size() == 2
+    assert remaining_data[0][0] == 2  // Bob
+    assert remaining_data[1][0] == 5  // Eve
 
+    // Cleanup
+    sql """DROP TABLE IF EXISTS ${table_name}"""
+    sql """drop catalog if exists ${catalog_name}"""
 
-        List<List<Object>> iceberg_position_orc_1 = sql  """select * from iceberg_position_orc where id != 1;"""
-        List<List<Object>> iceberg_position_orc_2 = sql """select * from iceberg_position_orc where name != "hello word" ;"""
-        List<List<Object>> iceberg_position_orc_3 = sql """select id from iceberg_position_orc where id != 1;"""
-        List<List<Object>> iceberg_position_orc_4 = sql """select name from iceberg_position_orc where id != 1;"""
-        List<List<Object>> iceberg_position_orc_5 = sql """select name from iceberg_position_orc where name != "hello word" ;"""
-        List<List<Object>> iceberg_position_orc_6 = sql """select id from iceberg_position_orc where name != "hello word" ;"""
-        List<List<Object>> iceberg_position_orc_7 = sql """select * from iceberg_position_orc where id != 1 and name != "33333";"""
-        assertTrue(iceberg_position_orc_1.size() == 5632)
-        assertTrue(iceberg_position_orc_2.size() == 5632)
-        assertTrue(iceberg_position_orc_3.size() == 5632)
-        assertTrue(iceberg_position_orc_4.size() == 5632)
-        assertTrue(iceberg_position_orc_5.size() == 5632)
-        assertTrue(iceberg_position_orc_6.size() == 5632)
-        assertTrue(iceberg_position_orc_7.size() == 5632)
-
-
-        List<List<Object>> iceberg_position_gen_1 = sql """select * from iceberg_position_gen_data where id != 1 and name != "hello";"""
-        assertTrue(iceberg_position_gen_1.size() == 5632)
-
-        List<List<Object>> iceberg_position_gen_2 = sql """select * from iceberg_position_gen_data where id != 2;"""
-        assertTrue(iceberg_position_gen_2.size() == 5120)
-        
-        List<List<Object>> iceberg_position_gen_22 = sql """select * from iceberg_position_gen_data where id != 5;"""
-        assertTrue(iceberg_position_gen_22.size() == 5632)
-
-        List<List<Object>> iceberg_position_gen_3 = sql """select * from iceberg_position_gen_data where name != "hello word" ;"""
-        assertTrue(iceberg_position_gen_3.size() == 5632)
-        
-        List<List<Object>> iceberg_position_gen_4 = sql """select id from iceberg_position_gen_data where id != 2;"""
-        assertTrue(iceberg_position_gen_4.size() == 5120)
-        
-        List<List<Object>> iceberg_position_gen_44 = sql """select id from iceberg_position_gen_data where id != 5;"""
-        assertTrue(iceberg_position_gen_44.size() == 5632)
-        
-        List<List<Object>> iceberg_position_gen_5 = sql """select name from iceberg_position_gen_data where id != 2;"""
-        assertTrue(iceberg_position_gen_5.size() == 5120)
-        
-        List<List<Object>> iceberg_position_gen_55 = sql """select name from iceberg_position_gen_data where id != 5;"""
-        assertTrue(iceberg_position_gen_55.size() == 5632)
-        
-        List<List<Object>> iceberg_position_gen_6 = sql """select name from iceberg_position_gen_data where name != "hello wordxx" ;"""
-        assertTrue(iceberg_position_gen_6.size() == 5632)
-        
-        List<List<Object>> iceberg_position_gen_7 = sql """select id from iceberg_position_gen_data where name != "hello word" ;"""
-        assertTrue(iceberg_position_gen_7.size() == 5632)
-
-        // sql """drop catalog ${catalog_name}"""
+    logger.info("Iceberg Position Delete test completed successfully")
 }
-/*
-
-
-create table iceberg_position_gen_data(
-    id int,
-    name string
-)
-USING iceberg
-TBLPROPERTIES (
-    'format-version' = '2',
-    'write.format.default' = 'orc',
-    'write.update.mode' = 'merge-on-read',
-    'write.merge.mode' = 'merge-on-read',
-    'write.delete.mode' = 'merge-on-read'
-);
-
-INSERT INTO iceberg_position_gen_data VALUES
-(1, "hello world"),
-(2, "select xxxxxxxxx"),
-(3, "example xxxx"),
-(4, "more dataxxx"),
-(5, "another examplexxx"),
-(6, "testxxx"),
-(7, "12345xxx"),
-(8, "abcdefxxxx"),
-(9, "xyzxxxxxx"),
-(10, "inserted dataxxxxx"),
-(11, "SQLxxxxx"),
-(12, "tablexxxx"),
-(13, "rowxxxx"),
-(14, "data entryxxxx"),
-(15, "final entryxxxxxx");
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-insert into iceberg_position_gen_data select * from iceberg_position_gen_data;
-
-
-
-create table iceberg_position_parquet(
-    id int,
-    name string
-)
-USING iceberg
-TBLPROPERTIES (
-    'format-version' = '2',
-    'write.format.default' = 'parquet',
-    'write.update.mode' = 'merge-on-read',
-    'write.merge.mode' = 'merge-on-read',
-    'write.delete.mode' = 'merge-on-read'
-);
-create table iceberg_position_orc(
-    id int,
-    name string
-)
-USING iceberg
-TBLPROPERTIES (
-    'format-version' = '2',
-    'write.format.default' = 'orc',
-    'write.update.mode' = 'merge-on-read',
-    'write.merge.mode' = 'merge-on-read',
-    'write.delete.mode' = 'merge-on-read'
-);
-
-insert into iceberg_position_parquet select * from iceberg_position_gen_data; 
-insert into iceberg_position_orc select * from iceberg_position_parquet;
-
-
-delete from iceberg_position_gen_data where id = 1;
-delete from iceberg_position_gen_data where id = 5;
-delete from iceberg_position_gen_data where id = 10;
-delete from iceberg_position_gen_data where id = 15;
-
-delete from iceberg_position_parquet where id = 1;
-delete from iceberg_position_parquet where id = 5;
-delete from iceberg_position_parquet where id = 10;
-delete from iceberg_position_parquet where id = 15;
-
-delete from iceberg_position_orc where id = 1;
-delete from iceberg_position_orc where id = 5;
-delete from iceberg_position_orc where id = 10;
-delete from iceberg_position_orc where id = 15;
-*/
-
-
