@@ -75,6 +75,7 @@ public class IcebergTransaction implements Transaction {
 
     private org.apache.iceberg.Transaction transaction;
     private final List<TIcebergCommitData> commitDataList = Lists.newArrayList();
+    private Optional<Expression> conflictDetectionFilter = Optional.empty();
 
     private IcebergInsertCommandContext insertCtx;
     private String branchName;
@@ -93,6 +94,14 @@ public class IcebergTransaction implements Transaction {
         synchronized (this) {
             this.commitDataList.addAll(commitDataList);
         }
+    }
+
+    public void setConflictDetectionFilter(Expression filter) {
+        conflictDetectionFilter = Optional.ofNullable(filter);
+    }
+
+    public void clearConflictDetectionFilter() {
+        conflictDetectionFilter = Optional.empty();
     }
 
     public List<TIcebergCommitData> getCommitDataList() {
@@ -606,8 +615,18 @@ public class IcebergTransaction implements Transaction {
 
     private void applyConflictDetectionFilter(RowDelta rowDelta, Table icebergTable,
             List<TIcebergCommitData> commitDataList) {
-        Optional<Expression> conflictFilter = buildConflictDetectionFilter(icebergTable, commitDataList);
-        conflictFilter.ifPresent(rowDelta::conflictDetectionFilter);
+        Optional<Expression> partitionFilter = buildConflictDetectionFilter(icebergTable, commitDataList);
+        Optional<Expression> combined =
+                combineConflictDetectionFilters(conflictDetectionFilter, partitionFilter);
+        combined.ifPresent(rowDelta::conflictDetectionFilter);
+    }
+
+    private Optional<Expression> combineConflictDetectionFilters(Optional<Expression> queryFilter,
+            Optional<Expression> partitionFilter) {
+        if (queryFilter.isPresent() && partitionFilter.isPresent()) {
+            return Optional.of(Expressions.and(queryFilter.get(), partitionFilter.get()));
+        }
+        return queryFilter.isPresent() ? queryFilter : partitionFilter;
     }
 
     private Optional<Expression> buildConflictDetectionFilter(Table icebergTable,

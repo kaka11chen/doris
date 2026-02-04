@@ -18,21 +18,17 @@
 #include "vec/runtime/merge_partitioner.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #include "common/cast_set.h"
 #include "common/config.h"
 #include "common/logging.h"
 #include "common/status.h"
-#include "util/string_util.h"
 #include "vec/columns/column_const.h"
 #include "vec/columns/column_nullable.h"
-#include "vec/columns/column_struct.h"
 #include "vec/columns/column_vector.h"
 #include "vec/core/block.h"
-#include "vec/data_types/data_type_nullable.h"
-#include "vec/data_types/data_type_struct.h"
-#include "vec/exec/format/table/iceberg/partition_spec.h"
-#include "vec/sink/writer/iceberg/partition_transformers.h"
+#include "vec/runtime/iceberg_partition_function.h"
 
 namespace doris::vectorized {
 #include "common/compile_check_begin.h"
@@ -65,77 +61,55 @@ Status MergePartitioner::init(const std::vector<TExpr>& /*texprs*/) {
     RETURN_IF_ERROR(VExpr::create_expr_tree(_merge_info.operation_expr, op_ctx));
     _operation_expr_ctxs.emplace_back(std::move(op_ctx));
 
-    if (_merge_info.__isset.insert_partition_exprs &&
-        !_merge_info.insert_partition_exprs.empty()) {
-        RETURN_IF_ERROR(
-                VExpr::create_expr_trees(_merge_info.insert_partition_exprs,
-                                         _insert_partition_expr_ctxs));
+    std::vector<TExpr> insert_exprs;
+    std::vector<TIcebergPartitionField> insert_fields;
+    if (_merge_info.__isset.insert_partition_exprs) {
+        insert_exprs = _merge_info.insert_partition_exprs;
     }
-
-    if (_merge_info.__isset.insert_partition_fields &&
-        !_merge_info.insert_partition_fields.empty()) {
-        _insert_partition_fields.reserve(_merge_info.insert_partition_fields.size());
-        for (const auto& field : _merge_info.insert_partition_fields) {
-            VExprContextSPtr ctx;
-            RETURN_IF_ERROR(VExpr::create_expr_tree(field.source_expr, ctx));
-            InsertPartitionField insert_field;
-            insert_field.transform = field.transform;
-            insert_field.expr_ctx = std::move(ctx);
-            insert_field.source_id = field.__isset.source_id ? field.source_id : 0;
-            insert_field.name = field.__isset.name ? field.name : "";
-            _insert_partition_fields.emplace_back(std::move(insert_field));
-        }
+    if (_merge_info.__isset.insert_partition_fields) {
+        insert_fields = _merge_info.insert_partition_fields;
+    }
+    if (!insert_exprs.empty() || !insert_fields.empty()) {
+        _insert_partition_function = std::make_unique<IcebergInsertPartitionFunction>(
+                _partition_count, _hash_method(), std::move(insert_exprs),
+                std::move(insert_fields));
+        RETURN_IF_ERROR(_insert_partition_function->init({}));
     }
 
     if (_merge_info.__isset.delete_partition_exprs &&
         !_merge_info.delete_partition_exprs.empty()) {
-        RETURN_IF_ERROR(
-                VExpr::create_expr_trees(_merge_info.delete_partition_exprs,
-                                         _delete_partition_expr_ctxs));
+        _delete_partition_function = std::make_unique<IcebergDeletePartitionFunction>(
+                _partition_count, _hash_method(), _merge_info.delete_partition_exprs);
+        RETURN_IF_ERROR(_delete_partition_function->init({}));
     }
     return Status::OK();
 }
 
 Status MergePartitioner::prepare(RuntimeState* state, const RowDescriptor& row_desc) {
     RETURN_IF_ERROR(VExpr::prepare(_operation_expr_ctxs, state, row_desc));
-    RETURN_IF_ERROR(VExpr::prepare(_insert_partition_expr_ctxs, state, row_desc));
-    if (!_insert_partition_fields.empty()) {
-        VExprContextSPtrs field_ctxs;
-        field_ctxs.reserve(_insert_partition_fields.size());
-        for (const auto& field : _insert_partition_fields) {
-            field_ctxs.emplace_back(field.expr_ctx);
-        }
-        RETURN_IF_ERROR(VExpr::prepare(field_ctxs, state, row_desc));
+    if (_insert_partition_function != nullptr) {
+        RETURN_IF_ERROR(_insert_partition_function->prepare(state, row_desc));
     }
-    RETURN_IF_ERROR(VExpr::prepare(_delete_partition_expr_ctxs, state, row_desc));
+    if (_delete_partition_function != nullptr) {
+        RETURN_IF_ERROR(_delete_partition_function->prepare(state, row_desc));
+    }
     return Status::OK();
 }
 
 Status MergePartitioner::open(RuntimeState* state) {
     RETURN_IF_ERROR(VExpr::open(_operation_expr_ctxs, state));
-    RETURN_IF_ERROR(VExpr::open(_insert_partition_expr_ctxs, state));
-    if (!_insert_partition_fields.empty()) {
-        VExprContextSPtrs field_ctxs;
-        field_ctxs.reserve(_insert_partition_fields.size());
-        for (const auto& field : _insert_partition_fields) {
-            field_ctxs.emplace_back(field.expr_ctx);
-        }
-        RETURN_IF_ERROR(VExpr::open(field_ctxs, state));
-        for (auto& field : _insert_partition_fields) {
-            try {
-                doris::iceberg::PartitionField partition_field(
-                        field.source_id, 0, field.name, field.transform);
-                field.transformer = PartitionColumnTransforms::create(
-                        partition_field, field.expr_ctx->root()->data_type());
-            } catch (const doris::Exception& e) {
-                LOG(WARNING) << "Merge partitioning fallback to RR: " << e.what();
-                _insert_random = true;
-                _insert_partition_fields.clear();
-                break;
-            }
+    if (_insert_partition_function != nullptr) {
+        RETURN_IF_ERROR(_insert_partition_function->open(state));
+        if (auto* insert_function =
+                    dynamic_cast<IcebergInsertPartitionFunction*>(
+                            _insert_partition_function.get());
+            insert_function != nullptr && insert_function->fallback_to_random()) {
+            _insert_random = true;
         }
     }
-    RETURN_IF_ERROR(VExpr::open(_delete_partition_expr_ctxs, state));
+    if (_delete_partition_function != nullptr) {
+        RETURN_IF_ERROR(_delete_partition_function->open(state));
+    }
     _init_insert_scaling(state);
     return Status::OK();
 }
@@ -144,7 +118,7 @@ Status MergePartitioner::close(RuntimeState* /*state*/) {
     return Status::OK();
 }
 
-Status MergePartitioner::do_partitioning(RuntimeState* /*state*/, Block* block) const {
+Status MergePartitioner::do_partitioning(RuntimeState* state, Block* block) const {
     const size_t rows = block->rows();
     if (rows == 0) {
         _channel_ids.clear();
@@ -185,24 +159,24 @@ Status MergePartitioner::do_partitioning(RuntimeState* /*state*/, Block* block) 
         }
     }
 
-    if (has_insert && !_insert_random && _insert_partition_expr_ctxs.empty()) {
-        if (_insert_partition_fields.empty()) {
-            return Status::InternalError("Merge partitioning insert exprs are empty");
-        }
+    if (has_insert && !_insert_random && _insert_partition_function == nullptr) {
+        return Status::InternalError("Merge partitioning insert exprs are empty");
     }
-    if (has_delete && _delete_partition_expr_ctxs.empty()) {
+    if (has_delete && _delete_partition_function == nullptr) {
         return Status::InternalError("Merge partitioning delete exprs are empty");
     }
 
     std::vector<uint32_t> insert_hashes;
     std::vector<uint32_t> delete_hashes;
+    const size_t insert_partition_count =
+            _enable_insert_rebalance ? _insert_partition_count : _partition_count;
     if (has_insert && !_insert_random) {
-        RETURN_IF_ERROR(_compute_insert_hashes(block, insert_hashes));
+        RETURN_IF_ERROR(_insert_partition_function->get_partitions(
+                state, block, insert_partition_count, insert_hashes));
     }
     if (has_delete) {
-        RETURN_IF_ERROR(
-                _compute_hashes(block, _delete_partition_expr_ctxs, delete_hashes, true));
-        _apply_partition_ids(delete_hashes, _partition_count);
+        RETURN_IF_ERROR(_delete_partition_function->get_partitions(
+                state, block, _partition_count, delete_hashes));
     }
     if (has_insert) {
         if (_insert_random) {
@@ -216,13 +190,8 @@ Status MergePartitioner::do_partitioning(RuntimeState* /*state*/, Block* block) 
             } else {
                 _insert_writer_count = static_cast<int>(_partition_count);
             }
-        } else {
-            if (_enable_insert_rebalance) {
-                _apply_partition_ids(insert_hashes, _insert_partition_count);
-                _apply_insert_rebalance(ops, insert_hashes, block->bytes());
-            } else {
-                _apply_partition_ids(insert_hashes, _partition_count);
-            }
+        } else if (_enable_insert_rebalance) {
+            _apply_insert_rebalance(ops, insert_hashes, block->bytes());
         }
     }
 
@@ -291,239 +260,35 @@ Status MergePartitioner::clone(RuntimeState* state,
     partitioner.reset(new_partitioner);
     RETURN_IF_ERROR(
             _clone_expr_ctxs(state, _operation_expr_ctxs, new_partitioner->_operation_expr_ctxs));
-    RETURN_IF_ERROR(_clone_expr_ctxs(state, _insert_partition_expr_ctxs,
-                                    new_partitioner->_insert_partition_expr_ctxs));
-    if (!_insert_partition_fields.empty()) {
-        VExprContextSPtrs src_field_ctxs;
-        src_field_ctxs.reserve(_insert_partition_fields.size());
-        for (const auto& field : _insert_partition_fields) {
-            src_field_ctxs.emplace_back(field.expr_ctx);
-        }
-        VExprContextSPtrs dst_field_ctxs;
-        RETURN_IF_ERROR(_clone_expr_ctxs(state, src_field_ctxs, dst_field_ctxs));
-        new_partitioner->_insert_partition_fields.reserve(dst_field_ctxs.size());
-        for (size_t i = 0; i < dst_field_ctxs.size(); ++i) {
-            InsertPartitionField field;
-            field.transform = _insert_partition_fields[i].transform;
-            field.expr_ctx = dst_field_ctxs[i];
-            field.source_id = _insert_partition_fields[i].source_id;
-            field.name = _insert_partition_fields[i].name;
-            new_partitioner->_insert_partition_fields.emplace_back(std::move(field));
-        }
+    if (_insert_partition_function != nullptr) {
+        RETURN_IF_ERROR(_insert_partition_function->clone(
+                state, new_partitioner->_insert_partition_function));
     }
-    RETURN_IF_ERROR(_clone_expr_ctxs(state, _delete_partition_expr_ctxs,
-                                    new_partitioner->_delete_partition_expr_ctxs));
+    if (_delete_partition_function != nullptr) {
+        RETURN_IF_ERROR(_delete_partition_function->clone(
+                state, new_partitioner->_delete_partition_function));
+    }
     new_partitioner->_insert_random = _insert_random;
     new_partitioner->_rr_offset = _rr_offset;
     return Status::OK();
 }
 
-Status MergePartitioner::_compute_insert_hashes(Block* block, std::vector<uint32_t>& hashes) const {
-    if (!_insert_partition_fields.empty()) {
-        return _compute_hashes_with_transform(block, _insert_partition_fields, hashes);
-    }
-    return _compute_hashes(block, _insert_partition_expr_ctxs, hashes, false);
-}
-
-Status MergePartitioner::_compute_hashes_with_transform(
-        Block* block, const std::vector<InsertPartitionField>& fields,
-        std::vector<uint32_t>& hashes) const {
-    const size_t rows = block->rows();
-    if (rows == 0) {
-        hashes.clear();
-        return Status::OK();
-    }
-    if (fields.empty()) {
-        return Status::InternalError("Merge partitioning insert fields are empty");
-    }
-
-    std::vector<int> results(fields.size());
-    for (size_t i = 0; i < fields.size(); ++i) {
-        RETURN_IF_ERROR(fields[i].expr_ctx->execute(block, &results[i]));
-    }
-
-    _initialize_hash_vals(hashes, rows);
-    auto* __restrict hash_values = hashes.data();
-    for (size_t i = 0; i < fields.size(); ++i) {
-        if (fields[i].transformer == nullptr) {
-            return Status::InternalError("Merge partitioning transform is not initialized");
-        }
-        ColumnWithTypeAndName transformed =
-                fields[i].transformer->apply(*block, results[i]);
-        const auto& [column, is_const] = unpack_if_const(transformed.column);
-        if (is_const) {
-            continue;
-        }
-        _hash_column(column, transformed.type, hash_values);
-    }
-    return Status::OK();
-}
-
-Status MergePartitioner::_compute_hashes(Block* block, const VExprContextSPtrs& expr_ctxs,
-                                         std::vector<uint32_t>& hashes,
-                                         bool delete_branch) const {
-    const size_t rows = block->rows();
-    if (rows == 0) {
-        hashes.clear();
-        return Status::OK();
-    }
-
-    std::vector<int> results(expr_ctxs.size());
-    for (size_t i = 0; i < expr_ctxs.size(); ++i) {
-        RETURN_IF_ERROR(expr_ctxs[i]->execute(block, &results[i]));
-    }
-
-    _initialize_hash_vals(hashes, rows);
-    auto* __restrict hash_values = hashes.data();
-    for (size_t i = 0; i < results.size(); ++i) {
-        const auto& col_info = block->get_by_position(results[i]);
-        const auto& [column, is_const] = unpack_if_const(col_info.column);
-        if (is_const) {
-            continue;
-        }
-        ColumnPtr hash_col = column;
-        DataTypePtr hash_type = col_info.type;
-        if (delete_branch) {
-            RETURN_IF_ERROR(_get_delete_hash_column(col_info, &hash_col, &hash_type));
-        }
-        _hash_column(hash_col, hash_type, hash_values);
-    }
-    return Status::OK();
-}
-
-void MergePartitioner::_initialize_hash_vals(std::vector<uint32_t>& hashes, size_t rows) const {
-    hashes.resize(rows);
-    if (_use_new_shuffle_hash_method) {
-        constexpr uint32_t kShuffleSeed = 0x9E3779B9U;
-        std::fill(hashes.begin(), hashes.end(), kShuffleSeed);
-    } else {
-        std::fill(hashes.begin(), hashes.end(), 0);
-    }
-}
-
-void MergePartitioner::_hash_column(const ColumnPtr& column, const DataTypePtr& type,
-                                    uint32_t* hashes) const {
-    if (_use_new_shuffle_hash_method) {
-        column->update_crc32c_batch(hashes, nullptr);
-    } else {
-        column->update_crcs_with_value(hashes, type->get_primitive_type(),
-                                       cast_set<uint32_t>(column->size()));
-    }
-}
-
-Status MergePartitioner::_get_delete_hash_column(const ColumnWithTypeAndName& column,
-                                                 ColumnPtr* out_column,
-                                                 DataTypePtr* out_type) const {
-    ColumnPtr hash_col = column.column;
-    DataTypePtr hash_type = column.type;
-    if (auto* nullable_col = check_and_get_column<ColumnNullable>(hash_col.get())) {
-        hash_col = nullable_col->get_nested_column_ptr();
-        hash_type = remove_nullable(hash_type);
-    }
-    const auto* struct_col = check_and_get_column<ColumnStruct>(hash_col.get());
-    const auto* struct_type = check_and_get_data_type<DataTypeStruct>(hash_type.get());
-    if (!struct_col || !struct_type) {
-        *out_column = column.column;
-        *out_type = column.type;
-        return Status::OK();
-    }
-
-    int file_path_idx = _find_file_path_index(*struct_type);
-    if (file_path_idx < 0 || file_path_idx >= struct_col->tuple_size()) {
-        return Status::InternalError("Row id struct missing file_path field");
-    }
-    *out_column = struct_col->get_column_ptr(file_path_idx);
-    *out_type = struct_type->get_element(file_path_idx);
-    return Status::OK();
-}
-
-int MergePartitioner::_find_file_path_index(const DataTypeStruct& struct_type) const {
-    auto normalize = [](const std::string& name) { return doris::to_lower(name); };
-    auto match_any = [](const std::string& name,
-                        std::initializer_list<const char*> candidates) {
-        for (const char* candidate : candidates) {
-            if (name == candidate) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    int file_path_idx = -1;
-    const auto& field_names = struct_type.get_element_names();
-    for (size_t i = 0; i < field_names.size(); ++i) {
-        std::string name = normalize(field_names[i]);
-        if (file_path_idx < 0 && match_any(name, {"file_path", "data_file_path", "path"})) {
-            file_path_idx = static_cast<int>(i);
-            break;
-        }
-    }
-
-    if (file_path_idx < 0 && !struct_type.get_elements().empty()) {
-        file_path_idx = 0;
-    }
-    return file_path_idx;
-}
-
-void MergePartitioner::_apply_partition_ids(std::vector<uint32_t>& hashes,
-                                            size_t partition_count) const {
-    if (partition_count == 0) {
-        return;
-    }
-    if (_use_new_shuffle_hash_method) {
-        for (auto& hash : hashes) {
-            hash = ShiftChannelIds()(hash, partition_count);
-        }
-    } else {
-        for (auto& hash : hashes) {
-            hash = ShuffleChannelIds()(hash, partition_count);
-        }
-    }
-}
-
 void MergePartitioner::_apply_insert_rebalance(const std::vector<int8_t>& ops,
                                                std::vector<uint32_t>& insert_hashes,
                                                size_t block_bytes) const {
-    if (!_enable_insert_rebalance || _partition_rebalancer == nullptr) {
+    if (!_enable_insert_rebalance || _insert_writer_assigner == nullptr) {
         return;
     }
     if (insert_hashes.empty() || _insert_partition_count == 0) {
         return;
     }
-    if (_partition_row_counts.size() != _insert_partition_count
-        || _partition_writer_ids.size() != _insert_partition_count
-        || _partition_writer_indexes.size() != _insert_partition_count) {
-        return;
-    }
-
-    _partition_rebalancer->rebalance();
-    std::fill(_partition_row_counts.begin(), _partition_row_counts.end(), 0);
-    std::fill(_partition_writer_ids.begin(), _partition_writer_ids.end(), -1);
-
+    std::vector<uint8_t> mask(ops.size(), 0);
     for (size_t i = 0; i < ops.size(); ++i) {
-        if (!_is_insert_op(ops[i])) {
-            continue;
-        }
-        const uint32_t partition_id = insert_hashes[i];
-        if (partition_id >= _insert_partition_count) {
-            continue;
-        }
-        _partition_row_counts[partition_id] += 1;
-        int writer_id = _partition_writer_ids[partition_id];
-        if (writer_id == -1) {
-            writer_id = _get_next_writer_id(static_cast<int>(partition_id));
-            _partition_writer_ids[partition_id] = writer_id;
-        }
-        insert_hashes[i] = static_cast<uint32_t>(writer_id);
-    }
-
-    for (size_t i = 0; i < _partition_row_counts.size(); ++i) {
-        if (_partition_row_counts[i] > 0) {
-            _partition_rebalancer->add_partition_row_count(
-                    static_cast<int>(i), _partition_row_counts[i]);
+        if (_is_insert_op(ops[i])) {
+            mask[i] = 1;
         }
     }
-    _partition_rebalancer->add_data_processed(static_cast<long>(block_bytes));
+    _insert_writer_assigner->assign(insert_hashes, &mask, ops.size(), block_bytes, insert_hashes);
 }
 
 void MergePartitioner::_init_insert_scaling(RuntimeState* state) {
@@ -531,6 +296,7 @@ void MergePartitioner::_init_insert_scaling(RuntimeState* state) {
     _insert_partition_count = 0;
     _insert_data_processed = 0;
     _insert_writer_count = 1;
+    _insert_writer_assigner.reset();
     _non_partition_scaling_threshold =
             config::table_sink_non_partition_write_scaling_data_processed_threshold;
 
@@ -540,7 +306,7 @@ void MergePartitioner::_init_insert_scaling(RuntimeState* state) {
     if (_insert_random) {
         return;
     }
-    if (_insert_partition_expr_ctxs.empty() && _insert_partition_fields.empty()) {
+    if (_insert_partition_function == nullptr) {
         return;
     }
 
@@ -561,18 +327,10 @@ void MergePartitioner::_init_insert_scaling(RuntimeState* state) {
             config::table_sink_partition_write_min_data_processed_rebalance_threshold,
             task_num);
 
-    _partition_rebalancer = std::make_unique<SkewedPartitionRebalancer>(
+    _insert_writer_assigner = std::make_unique<SkewedWriterAssigner>(
             static_cast<int>(_insert_partition_count), static_cast<int>(_partition_count), 1,
             min_partition_threshold, min_data_threshold);
-    _partition_row_counts.assign(_insert_partition_count, 0);
-    _partition_writer_ids.assign(_insert_partition_count, -1);
-    _partition_writer_indexes.assign(_insert_partition_count, 0);
     _enable_insert_rebalance = true;
-}
-
-int MergePartitioner::_get_next_writer_id(int partition_id) const {
-    return _partition_rebalancer->get_task_id(partition_id,
-                                              _partition_writer_indexes[partition_id]++);
 }
 
 bool MergePartitioner::_is_insert_op(int8_t op) const {

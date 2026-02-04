@@ -29,6 +29,7 @@ import org.apache.doris.thrift.TFileContent;
 import org.apache.doris.thrift.TIcebergCommitData;
 import org.apache.doris.transaction.TransactionType;
 
+import org.apache.iceberg.expressions.Expression;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -52,6 +53,7 @@ import java.util.Optional;
  */
 public class IcebergDeleteExecutor extends BaseExternalTableInsertExecutor {
     private static final Logger LOG = LogManager.getLogger(IcebergDeleteExecutor.class);
+    private Optional<Expression> conflictDetectionFilter = Optional.empty();
 
     public IcebergDeleteExecutor(ConnectContext ctx, IcebergExternalTable table,
             String labelName, NereidsPlanner planner,
@@ -65,10 +67,19 @@ public class IcebergDeleteExecutor extends BaseExternalTableInsertExecutor {
         super.finalizeSink(fragment, sink, physicalSink);
     }
 
+    public void setConflictDetectionFilter(Optional<Expression> filter) {
+        conflictDetectionFilter = filter == null ? Optional.empty() : filter;
+    }
+
     @Override
     protected void beforeExec() throws UserException {
         IcebergTransaction transaction = (IcebergTransaction) transactionManager.getTransaction(txnId);
         transaction.beginDelete((IcebergExternalTable) table);
+        if (conflictDetectionFilter.isPresent()) {
+            transaction.setConflictDetectionFilter(conflictDetectionFilter.get());
+        } else {
+            transaction.clearConflictDetectionFilter();
+        }
     }
 
     @Override

@@ -124,7 +124,7 @@ TEST_F(LocalExchangerTest, ShuffleExchanger) {
         slot->_column_id = 0;
         ((vectorized::Crc32HashPartitioner<vectorized::ShuffleChannelIds>*)_sink_local_states[i]
                  ->_partitioner.get())
-                ->_partition_expr_ctxs.push_back(
+                ->mutable_partition_expr_ctxs_for_test().push_back(
                         std::make_shared<doris::vectorized::VExprContext>(slot));
         _sink_local_states[i]->_channel_id = i;
         _sink_local_states[i]->_shared_state = shared_state.get();
@@ -1200,7 +1200,7 @@ TEST_F(LocalExchangerTest, TestShuffleExchangerWrongMap) {
         slot->_column_id = 0;
         ((vectorized::Crc32HashPartitioner<vectorized::ShuffleChannelIds>*)_sink_local_states[i]
                  ->_partitioner.get())
-                ->_partition_expr_ctxs.push_back(
+                ->mutable_partition_expr_ctxs_for_test().push_back(
                         std::make_shared<doris::vectorized::VExprContext>(slot));
         _sink_local_states[i]->_channel_id = i;
         _sink_local_states[i]->_shared_state = shared_state.get();

@@ -1526,10 +1526,9 @@ Status OrcReader::_fill_missing_columns(
     return Status::OK();
 }
 
-Status OrcReader::_fill_row_id_columns(Block* block) {
+Status OrcReader::_fill_row_id_columns(Block* block, int64_t start_row) {
     if (_row_id_column_iterator_pair.first != nullptr) {
-        RETURN_IF_ERROR(
-                _row_id_column_iterator_pair.first->seek_to_ordinal(_row_reader->getRowNumber()));
+        RETURN_IF_ERROR(_row_id_column_iterator_pair.first->seek_to_ordinal(start_row));
         size_t fill_size = _batch->numElements;
 
         auto col = block->get_by_position(_row_id_column_iterator_pair.second)
@@ -2404,7 +2403,6 @@ Status OrcReader::_get_next_block_impl(Block* block, size_t* read_rows, bool* eo
             }
         }
         int64_t start_row = _row_reader->getRowNumber();
-
         std::vector<orc::ColumnVectorBatch*> batch_vec;
         _fill_batch_vec(batch_vec, _batch.get(), 0);
 
@@ -2429,7 +2427,7 @@ Status OrcReader::_get_next_block_impl(Block* block, size_t* read_rows, bool* eo
         RETURN_IF_ERROR(
                 _fill_missing_columns(block, _batch->numElements, _lazy_read_ctx.missing_columns));
 
-        RETURN_IF_ERROR(_fill_row_id_columns(block));
+        RETURN_IF_ERROR(_fill_row_id_columns(block, start_row));
         RETURN_IF_ERROR(_append_iceberg_rowid_column(block, block->rows(), start_row));
 
         if (block->rows() == 0) {
@@ -2440,7 +2438,7 @@ Status OrcReader::_get_next_block_impl(Block* block, size_t* read_rows, bool* eo
         }
         {
             SCOPED_RAW_TIMER(&_statistics.predicate_filter_time);
-            _execute_filter_position_delete_rowids(*_filter);
+            _execute_filter_position_delete_rowids(*_filter, start_row);
             {
                 SCOPED_RAW_TIMER(&_statistics.decode_null_map_time);
                 RETURN_IF_CATCH_EXCEPTION(
@@ -2477,7 +2475,6 @@ Status OrcReader::_get_next_block_impl(Block* block, size_t* read_rows, bool* eo
             }
         }
         int64_t start_row = _row_reader->getRowNumber();
-
         if (!_dict_cols_has_converted && !_dict_filter_cols.empty()) {
             for (auto& dict_filter_cols : _dict_filter_cols) {
                 MutableColumnPtr dict_col_ptr = ColumnInt32::create();
@@ -2528,7 +2525,7 @@ Status OrcReader::_get_next_block_impl(Block* block, size_t* read_rows, bool* eo
         RETURN_IF_ERROR(
                 _fill_missing_columns(block, _batch->numElements, _lazy_read_ctx.missing_columns));
 
-        RETURN_IF_ERROR(_fill_row_id_columns(block));
+        RETURN_IF_ERROR(_fill_row_id_columns(block, start_row));
         RETURN_IF_ERROR(_append_iceberg_rowid_column(block, block->rows(), start_row));
 
         if (block->rows() == 0) {
@@ -2573,18 +2570,18 @@ Status OrcReader::_get_next_block_impl(Block* block, size_t* read_rows, bool* eo
                     Block::erase_useless_column(block, column_to_keep);
                     return _convert_dict_cols_to_string_cols(block, &batch_vec);
                 }
-                _execute_filter_position_delete_rowids(result_filter);
+                _execute_filter_position_delete_rowids(result_filter, start_row);
                 RETURN_IF_CATCH_EXCEPTION(
                         Block::filter_block_internal(block, columns_to_filter, result_filter));
                 Block::erase_useless_column(block, column_to_keep);
             } else {
                 if (_delete_rows_filter_ptr) {
-                    _execute_filter_position_delete_rowids(*_delete_rows_filter_ptr);
+                    _execute_filter_position_delete_rowids(*_delete_rows_filter_ptr, start_row);
                     RETURN_IF_CATCH_EXCEPTION(Block::filter_block_internal(
                             block, columns_to_filter, (*_delete_rows_filter_ptr)));
                 } else if (_position_delete_ordered_rowids != nullptr) {
                     std::unique_ptr<IColumn::Filter> filter(new IColumn::Filter(block->rows(), 1));
-                    _execute_filter_position_delete_rowids(*filter);
+                    _execute_filter_position_delete_rowids(*filter, start_row);
                     RETURN_IF_CATCH_EXCEPTION(
                             Block::filter_block_internal(block, columns_to_filter, (*filter)));
                 }
@@ -3324,11 +3321,12 @@ void ORCFileInputStream::_build_large_ranges_input_stripe_streams(
     }
 }
 
-void OrcReader::_execute_filter_position_delete_rowids(IColumn::Filter& filter) {
+void OrcReader::_execute_filter_position_delete_rowids(IColumn::Filter& filter,
+                                                       int64_t start_row) {
     if (_position_delete_ordered_rowids == nullptr) {
         return;
     }
-    auto start = _row_reader->getRowNumber();
+    auto start = start_row;
     auto nums = _batch->numElements;
     auto l = std::lower_bound(_position_delete_ordered_rowids->begin(),
                               _position_delete_ordered_rowids->end(), start);

@@ -28,12 +28,15 @@ import org.apache.doris.planner.PlanFragment;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.transaction.TransactionType;
 
+import org.apache.iceberg.expressions.Expression;
+
 import java.util.Optional;
 
 /**
  * Executor for Iceberg UPDATE merge operations (single scan + merge sink).
  */
 public class IcebergMergeExecutor extends BaseExternalTableInsertExecutor {
+    private Optional<Expression> conflictDetectionFilter = Optional.empty();
 
     public IcebergMergeExecutor(ConnectContext ctx, IcebergExternalTable table,
             String labelName, NereidsPlanner planner,
@@ -45,10 +48,19 @@ public class IcebergMergeExecutor extends BaseExternalTableInsertExecutor {
         super.finalizeSink(fragment, sink, physicalSink);
     }
 
+    public void setConflictDetectionFilter(Optional<Expression> filter) {
+        conflictDetectionFilter = filter == null ? Optional.empty() : filter;
+    }
+
     @Override
     protected void beforeExec() throws UserException {
         IcebergTransaction transaction = (IcebergTransaction) transactionManager.getTransaction(txnId);
         transaction.beginMerge((IcebergExternalTable) table);
+        if (conflictDetectionFilter.isPresent()) {
+            transaction.setConflictDetectionFilter(conflictDetectionFilter.get());
+        } else {
+            transaction.clearConflictDetectionFilter();
+        }
     }
 
     @Override

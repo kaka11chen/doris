@@ -391,13 +391,22 @@ TEST_F(VIcebergDeleteSinkTest, TestBuildPositionDeleteBlock) {
 TEST_F(VIcebergDeleteSinkTest, TestGenerateDeleteFilePath) {
     VExprContextSPtrs output_exprs;
     auto sink = std::make_shared<VIcebergDeleteSink>(_t_data_sink, output_exprs, nullptr, nullptr);
+    ObjectPool pool;
+    Status status = sink->init_properties(&pool);
+    ASSERT_TRUE(status.ok());
 
     std::string data_file_path = "data/file1.parquet";
     std::string delete_file_path = sink->_generate_delete_file_path(data_file_path);
 
     // Verify the path format
     ASSERT_FALSE(delete_file_path.empty());
-    ASSERT_NE(std::string::npos, delete_file_path.find("metadata/"));
+    const auto& delete_sink = _t_data_sink.iceberg_delete_sink;
+    std::string expected_base =
+            delete_sink.__isset.output_path ? delete_sink.output_path : delete_sink.table_location;
+    if (!expected_base.empty() && expected_base.back() != '/') {
+        expected_base += '/';
+    }
+    ASSERT_TRUE(delete_file_path.rfind(expected_base, 0) == 0);
     ASSERT_NE(std::string::npos, delete_file_path.find("delete_pos_"));
 }
 

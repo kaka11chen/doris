@@ -349,7 +349,7 @@ private:
                                 std::unique_ptr<orc::SearchArgumentBuilder>& builder);
     bool _init_search_argument(const VExprSPtrs& exprs);
 
-    void _execute_filter_position_delete_rowids(IColumn::Filter& filter);
+    void _execute_filter_position_delete_rowids(IColumn::Filter& filter, int64_t start_row);
     void _fill_batch_vec(std::vector<orc::ColumnVectorBatch*>& result,
                          orc::ColumnVectorBatch* batch, int idx);
 
@@ -658,7 +658,7 @@ private:
         return true;
     }
 
-    Status _fill_row_id_columns(Block* block);
+    Status _fill_row_id_columns(Block* block, int64_t start_row);
     Status _append_iceberg_rowid_column(Block* block, size_t rows, int64_t start_row);
 
     bool _seek_to_read_one_line() {

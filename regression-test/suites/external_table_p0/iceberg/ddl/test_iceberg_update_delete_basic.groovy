@@ -47,66 +47,107 @@ suite("test_iceberg_update_delete_basic", "p0,external,iceberg,external_docker,e
     sql """create database if not exists ${dbName}"""
     sql """use ${dbName}"""
 
-    sql """drop table if exists ${tableName}"""
-    sql """
-        CREATE TABLE ${tableName} (
-            id INT,
-            name STRING,
-            age INT
-        ) ENGINE=iceberg
-    """
+    def formats = ["parquet", "orc"]
+    for (String format : formats) {
+        logger.info("Run update/delete test with format ${format}")
+        String formatTableName = "${tableName}_${format}"
+        String formatTableNamePartition = "${tableNamePartition}_${format}"
 
-    sql """
-        INSERT INTO ${tableName} VALUES
-        (1, 'Alice', 25),
-        (2, 'Bob', 30),
-        (3, 'Charlie', 35)
-    """
+        sql """drop table if exists ${formatTableName}"""
+        sql """
+            CREATE TABLE ${formatTableName} (
+                id INT,
+                name STRING,
+                age INT
+            ) ENGINE=iceberg
+            PROPERTIES (
+                "format-version" = "2",
+                "write.format.default" = "${format}"
+            )
+        """
 
-    qt_q01 """UPDATE ${tableName} SET name = 'Updated' WHERE id = 1"""
-    qt_order_q02 """SELECT * FROM ${tableName}"""
-    // assertEquals(1, updated.size())
-    // assertEquals("Updated", updated[0][0])
+        sql """
+            INSERT INTO ${formatTableName} VALUES
+            (1, 'Alice', 25),
+            (2, 'Bob', 30),
+            (3, 'Charlie', 35)
+        """
 
-    qt_q03 """DELETE FROM ${tableName} WHERE id = 2"""
-    qt_order_q04 """SELECT * FROM ${tableName}"""
-    // assertEquals(2, countAfterDelete[0][0])
+        def q01 = "qt_${format}_q01"
+        "${q01}" """UPDATE ${formatTableName} SET name = 'Updated' WHERE id = 1"""
+        def q02 = "order_qt_${format}_q02"
+        "${q02}" """SELECT * FROM ${formatTableName}"""
+        // assertEquals(1, updated.size())
+        // assertEquals("Updated", updated[0][0])
 
-    qt_order_q05 """
-        SELECT * FROM ${catalogName}.${dbName}.${tableName}\$delete_files
-    """
-    // assertTrue(deleteFiles.size() > 0)
+        def q03 = "qt_${format}_q03"
+        "${q03}" """DELETE FROM ${formatTableName} WHERE id = 2"""
+        def q04 = "order_qt_${format}_q04"
+        "${q04}" """SELECT * FROM ${formatTableName}"""
+        // assertEquals(2, countAfterDelete[0][0])
 
-    sql """drop table if exists ${tableNamePartition}"""
-    sql """
-        CREATE TABLE ${tableNamePartition} (
-            id INT,
-            name STRING,
-            age INT,
-            dt DATE
-        ) ENGINE=iceberg
-        PARTITION BY LIST (DAY(dt)) ()
-    """
+        def deleteFiles = sql """
+            SELECT file_path, file_format
+            FROM ${catalogName}.${dbName}.${formatTableName}\$delete_files
+        """
+        assert deleteFiles.size() > 0 : "Delete files should be created for ${formatTableName}"
+        for (def row : deleteFiles) {
+            String filePath = row[0].toString()
+            String fileFormat = row[1].toString()
+            assert filePath.contains("/data/delete_pos_")
+            assert filePath.endsWith(format == "parquet" ? ".parquet" : ".orc")
+            assert fileFormat.equalsIgnoreCase(format)
+        }
 
-    sql """
-        INSERT INTO ${tableNamePartition} VALUES
-        (10, 'Ann', 20, '2024-01-01'),
-        (11, 'Ben', 21, '2024-01-02'),
-        (12, 'Cat', 22, '2024-01-03')
-    """
+        sql """drop table if exists ${formatTableNamePartition}"""
+        sql """
+            CREATE TABLE ${formatTableNamePartition} (
+                id INT,
+                name STRING,
+                age INT,
+                dt DATE
+            ) ENGINE=iceberg
+            PARTITION BY LIST (DAY(dt)) ()
+            PROPERTIES (
+                "format-version" = "2",
+                "write.format.default" = "${format}"
+            )
+        """
 
-    qt_q06 """UPDATE ${tableNamePartition} SET name = 'UpdatedP' WHERE id = 10"""
-    qt_order_q07 """SELECT * FROM ${tableNamePartition}"""
+        sql """
+            INSERT INTO ${formatTableNamePartition} VALUES
+            (10, 'Ann', 20, '2024-01-01'),
+            (11, 'Ben', 21, '2024-01-02'),
+            (12, 'Cat', 22, '2024-01-03')
+        """
 
-    qt_q08 """DELETE FROM ${tableNamePartition} WHERE id = 11"""
-    qt_order_q09 """SELECT * FROM ${tableNamePartition}"""
+        def q06 = "qt_${format}_q06"
+        "${q06}" """UPDATE ${formatTableNamePartition} SET name = 'UpdatedP' WHERE id = 10"""
+        def q07 = "order_qt_${format}_q07"
+        "${q07}" """SELECT * FROM ${formatTableNamePartition}"""
 
-    qt_order_q10 """
-        SELECT * FROM ${catalogName}.${dbName}.${tableNamePartition}\$delete_files
-    """
+        def q08 = "qt_${format}_q08"
+        "${q08}" """DELETE FROM ${formatTableNamePartition} WHERE id = 11"""
+        def q09 = "order_qt_${format}_q09"
+        "${q09}" """SELECT * FROM ${formatTableNamePartition}"""
 
-    sql """drop table if exists ${tableName}"""
-    sql """drop table if exists ${tableNamePartition}"""
+        def partitionDeleteFiles = sql """
+            SELECT file_path, file_format
+            FROM ${catalogName}.${dbName}.${formatTableNamePartition}\$delete_files
+        """
+        assert partitionDeleteFiles.size() > 0 : "Delete files should be created for ${formatTableNamePartition}"
+        for (def row : partitionDeleteFiles) {
+            String filePath = row[0].toString()
+            String fileFormat = row[1].toString()
+            assert filePath.contains("/data/delete_pos_")
+            assert filePath.endsWith(format == "parquet" ? ".parquet" : ".orc")
+            assert fileFormat.equalsIgnoreCase(format)
+        }
+
+        sql """drop table if exists ${formatTableName}"""
+        sql """drop table if exists ${formatTableNamePartition}"""
+    }
+
     sql """drop database if exists ${dbName} force"""
     sql """drop catalog if exists ${catalogName}"""
 }

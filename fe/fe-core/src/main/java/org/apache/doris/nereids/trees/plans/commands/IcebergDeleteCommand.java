@@ -21,6 +21,7 @@ import org.apache.doris.analysis.StmtType;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.common.util.Util;
+import org.apache.doris.datasource.iceberg.IcebergConflictDetectionFilterUtils;
 import org.apache.doris.datasource.iceberg.IcebergExternalDatabase;
 import org.apache.doris.datasource.iceberg.IcebergExternalTable;
 import org.apache.doris.datasource.iceberg.IcebergMergeOperation;
@@ -143,6 +144,9 @@ public class IcebergDeleteCommand extends Command implements ForwardWithSync, Ex
             // Set planner in executor for later use
             executor.setPlanner(planner);
             executor.checkBlockRules();
+            Optional<org.apache.iceberg.expressions.Expression> conflictFilter =
+                    IcebergConflictDetectionFilterUtils.buildConflictDetectionFilter(
+                            planner.getAnalyzedPlan(), icebergTable);
 
             PhysicalSink<?> physicalSink = getPhysicalSink(planner);
             PlanFragment fragment = planner.getFragments().get(0);
@@ -158,6 +162,7 @@ public class IcebergDeleteCommand extends Command implements ForwardWithSync, Ex
                     planner,
                     emptyInsert,
                     -1L);
+            deleteExecutor.setConflictDetectionFilter(conflictFilter);
 
             if (deleteExecutor.isEmptyInsert()) {
                 return;

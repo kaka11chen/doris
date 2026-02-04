@@ -47,95 +47,131 @@ suite("test_iceberg_merge_into_basic", "p0,external,iceberg,external_docker,exte
     sql """create database if not exists ${dbName}"""
     sql """use ${dbName}"""
 
-    sql """drop table if exists ${tableName}"""
-    sql """
-        CREATE TABLE ${tableName} (
-            id INT,
-            name STRING,
-            age INT
-        ) ENGINE=iceberg
-    """
+    def formats = ["parquet", "orc"]
+    for (String format : formats) {
+        logger.info("Run merge-into test with format ${format}")
+        String formatTableName = "${tableName}_${format}"
+        String formatTableNamePartition = "${tableNamePartition}_${format}"
 
-    sql """
-        INSERT INTO ${tableName} VALUES
-        (1, 'Alice', 25),
-        (2, 'Bob', 30),
-        (3, 'Charlie', 35)
-    """
+        sql """drop table if exists ${formatTableName}"""
+        sql """
+            CREATE TABLE ${formatTableName} (
+                id INT,
+                name STRING,
+                age INT
+            ) ENGINE=iceberg
+            PROPERTIES (
+                "format-version" = "2",
+                "write.format.default" = "${format}"
+            )
+        """
 
-    qt_q01 """
-        MERGE INTO ${tableName} t
-        USING (
-            SELECT 1 AS id, 'Alice_new' AS name, 26 AS age, 'U' AS flag
-            UNION ALL
-            SELECT 2, 'Bob', 30, 'D'
-            UNION ALL
-            SELECT 4, 'Dora', 28, 'I'
-        ) s
-        ON t.id = s.id
-        WHEN MATCHED AND s.flag = 'D' THEN DELETE
-        WHEN MATCHED THEN UPDATE SET
-            name = s.name,
-            age = s.age
-        WHEN NOT MATCHED THEN INSERT (id, name, age)
-        VALUES (s.id, s.name, s.age)
-    """
+        sql """
+            INSERT INTO ${formatTableName} VALUES
+            (1, 'Alice', 25),
+            (2, 'Bob', 30),
+            (3, 'Charlie', 35)
+        """
 
-    qt_order_q02 """SELECT * FROM ${tableName}"""
-    // assertEquals(3, rows.size())
-    // assertEquals([1, "Alice_new", 26], rows[0])
-    // assertEquals([3, "Charlie", 35], rows[1])
-    // assertEquals([4, "Dora", 28], rows[2])
+        def q01 = "qt_${format}_q01"
+        "${q01}" """
+            MERGE INTO ${formatTableName} t
+            USING (
+                SELECT 1 AS id, 'Alice_new' AS name, 26 AS age, 'U' AS flag
+                UNION ALL
+                SELECT 2, 'Bob', 30, 'D'
+                UNION ALL
+                SELECT 4, 'Dora', 28, 'I'
+            ) s
+            ON t.id = s.id
+            WHEN MATCHED AND s.flag = 'D' THEN DELETE
+            WHEN MATCHED THEN UPDATE SET
+                name = s.name,
+                age = s.age
+            WHEN NOT MATCHED THEN INSERT (id, name, age)
+            VALUES (s.id, s.name, s.age)
+        """
 
-    qt_order_q03 """
-        SELECT * FROM ${catalogName}.${dbName}.${tableName}\$delete_files
-    """
-    // assertTrue(deleteFiles.size() > 0)
+        def q02 = "order_qt_${format}_q02"
+        "${q02}" """SELECT * FROM ${formatTableName}"""
+        // assertEquals(3, rows.size())
+        // assertEquals([1, "Alice_new", 26], rows[0])
+        // assertEquals([3, "Charlie", 35], rows[1])
+        // assertEquals([4, "Dora", 28], rows[2])
 
-    sql """drop table if exists ${tableNamePartition}"""
-    sql """
-        CREATE TABLE ${tableNamePartition} (
-            id INT,
-            name STRING,
-            age INT,
-            dt DATE
-        ) ENGINE=iceberg
-        PARTITION BY LIST (DAY(dt)) ()
-    """
+        def deleteFiles = sql """
+            SELECT file_path, file_format
+            FROM ${catalogName}.${dbName}.${formatTableName}\$delete_files
+        """
+        assert deleteFiles.size() > 0 : "Delete files should be created for ${formatTableName}"
+        for (def row : deleteFiles) {
+            String filePath = row[0].toString()
+            String fileFormat = row[1].toString()
+            assert filePath.contains("/data/delete_pos_")
+            assert filePath.endsWith(format == "parquet" ? ".parquet" : ".orc")
+            assert fileFormat.equalsIgnoreCase(format)
+        }
 
-    sql """
-        INSERT INTO ${tableNamePartition} VALUES
-        (1, 'Alice', 25, '2024-01-01'),
-        (2, 'Bob', 30, '2024-01-02'),
-        (3, 'Charlie', 35, '2024-01-03')
-    """
+        sql """drop table if exists ${formatTableNamePartition}"""
+        sql """
+            CREATE TABLE ${formatTableNamePartition} (
+                id INT,
+                name STRING,
+                age INT,
+                dt DATE
+            ) ENGINE=iceberg
+            PARTITION BY LIST (DAY(dt)) ()
+            PROPERTIES (
+                "format-version" = "2",
+                "write.format.default" = "${format}"
+            )
+        """
 
-    qt_q04 """
-        MERGE INTO ${tableNamePartition} t
-        USING (
-            SELECT 1 AS id, 'Alice_new' AS name, 26 AS age, DATE '2024-01-01' AS dt, 'U' AS flag
-            UNION ALL
-            SELECT 2, 'Bob', 30, DATE '2024-01-02', 'D'
-            UNION ALL
-            SELECT 4, 'Dora', 28, DATE '2024-01-04', 'I'
-        ) s
-        ON t.id = s.id
-        WHEN MATCHED AND s.flag = 'D' THEN DELETE
-        WHEN MATCHED THEN UPDATE SET
-            name = s.name,
-            age = s.age
-        WHEN NOT MATCHED THEN INSERT (id, name, age, dt)
-        VALUES (s.id, s.name, s.age, s.dt)
-    """
+        sql """
+            INSERT INTO ${formatTableNamePartition} VALUES
+            (1, 'Alice', 25, '2024-01-01'),
+            (2, 'Bob', 30, '2024-01-02'),
+            (3, 'Charlie', 35, '2024-01-03')
+        """
 
-    qt_order_q05 """SELECT * FROM ${tableNamePartition}"""
+        def q04 = "qt_${format}_q04"
+        "${q04}" """
+            MERGE INTO ${formatTableNamePartition} t
+            USING (
+                SELECT 1 AS id, 'Alice_new' AS name, 26 AS age, DATE '2024-01-01' AS dt, 'U' AS flag
+                UNION ALL
+                SELECT 2, 'Bob', 30, DATE '2024-01-02', 'D'
+                UNION ALL
+                SELECT 4, 'Dora', 28, DATE '2024-01-04', 'I'
+            ) s
+            ON t.id = s.id
+            WHEN MATCHED AND s.flag = 'D' THEN DELETE
+            WHEN MATCHED THEN UPDATE SET
+                name = s.name,
+                age = s.age
+            WHEN NOT MATCHED THEN INSERT (id, name, age, dt)
+            VALUES (s.id, s.name, s.age, s.dt)
+        """
 
-    qt_order_q06 """
-        SELECT * FROM ${catalogName}.${dbName}.${tableNamePartition}\$delete_files
-    """
+        def q05 = "order_qt_${format}_q05"
+        "${q05}" """SELECT * FROM ${formatTableNamePartition}"""
 
-    sql """drop table if exists ${tableName}"""
-    sql """drop table if exists ${tableNamePartition}"""
+        def partitionDeleteFiles = sql """
+            SELECT file_path, file_format
+            FROM ${catalogName}.${dbName}.${formatTableNamePartition}\$delete_files
+        """
+        assert partitionDeleteFiles.size() > 0 : "Delete files should be created for ${formatTableNamePartition}"
+        for (def row : partitionDeleteFiles) {
+            String filePath = row[0].toString()
+            String fileFormat = row[1].toString()
+            assert filePath.contains("/data/delete_pos_")
+            assert filePath.endsWith(format == "parquet" ? ".parquet" : ".orc")
+            assert fileFormat.equalsIgnoreCase(format)
+        }
+
+        sql """drop table if exists ${formatTableName}"""
+        sql """drop table if exists ${formatTableNamePartition}"""
+    }
     sql """drop database if exists ${dbName} force"""
     sql """drop catalog if exists ${catalogName}"""
 }

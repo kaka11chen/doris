@@ -22,8 +22,7 @@
 #include <string>
 
 #include "vec/runtime/partitioner.h"
-#include "vec/exec/skewed_partition_rebalancer.h"
-#include "vec/sink/writer/iceberg/partition_transformers.h"
+#include "vec/runtime/writer_assigner.h"
 
 namespace doris::vectorized {
 #include "common/compile_check_begin.h"
@@ -42,35 +41,17 @@ public:
     Status clone(RuntimeState* state, std::unique_ptr<PartitionerBase>& partitioner) override;
 
 private:
-    struct InsertPartitionField {
-        std::string transform;
-        VExprContextSPtr expr_ctx;
-        std::unique_ptr<PartitionColumnTransform> transformer;
-        int32_t source_id = 0;
-        std::string name;
-    };
-
-    Status _compute_insert_hashes(Block* block, std::vector<uint32_t>& hashes) const;
-    Status _compute_hashes(Block* block, const VExprContextSPtrs& expr_ctxs,
-                           std::vector<uint32_t>& hashes, bool delete_branch) const;
-    Status _compute_hashes_with_transform(Block* block,
-                                          const std::vector<InsertPartitionField>& fields,
-                                          std::vector<uint32_t>& hashes) const;
-    void _initialize_hash_vals(std::vector<uint32_t>& hashes, size_t rows) const;
-    void _hash_column(const ColumnPtr& column, const DataTypePtr& type, uint32_t* hashes) const;
-    Status _get_delete_hash_column(const ColumnWithTypeAndName& column, ColumnPtr* out_column,
-                                   DataTypePtr* out_type) const;
-    int _find_file_path_index(const DataTypeStruct& struct_type) const;
-    void _apply_partition_ids(std::vector<uint32_t>& hashes, size_t partition_count) const;
     void _apply_insert_rebalance(const std::vector<int8_t>& ops, std::vector<uint32_t>& insert_hashes,
                                  size_t block_bytes) const;
     void _init_insert_scaling(RuntimeState* state);
-    int _get_next_writer_id(int partition_id) const;
     bool _is_insert_op(int8_t op) const;
     bool _is_delete_op(int8_t op) const;
     uint32_t _next_rr_channel() const;
     Status _clone_expr_ctxs(RuntimeState* state, const VExprContextSPtrs& src,
                             VExprContextSPtrs& dst) const;
+    ShuffleHashMethod _hash_method() const {
+        return _use_new_shuffle_hash_method ? ShuffleHashMethod::CRC32C : ShuffleHashMethod::CRC32;
+    }
 
     TMergePartitionInfo _merge_info;
     bool _use_new_shuffle_hash_method = false;
@@ -81,13 +62,9 @@ private:
     mutable int _insert_writer_count = 1;
     int64_t _non_partition_scaling_threshold = 0;
     VExprContextSPtrs _operation_expr_ctxs;
-    VExprContextSPtrs _insert_partition_expr_ctxs;
-    std::vector<InsertPartitionField> _insert_partition_fields;
-    VExprContextSPtrs _delete_partition_expr_ctxs;
-    mutable std::unique_ptr<SkewedPartitionRebalancer> _partition_rebalancer;
-    mutable std::vector<int> _partition_row_counts;
-    mutable std::vector<int> _partition_writer_ids;
-    mutable std::vector<int> _partition_writer_indexes;
+    std::unique_ptr<PartitionFunction> _insert_partition_function;
+    std::unique_ptr<PartitionFunction> _delete_partition_function;
+    mutable std::unique_ptr<SkewedWriterAssigner> _insert_writer_assigner;
     mutable std::vector<uint32_t> _channel_ids;
     mutable uint32_t _rr_offset = 0;
 };
