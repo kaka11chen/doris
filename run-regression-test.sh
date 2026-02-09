@@ -180,7 +180,7 @@ if ! test -f ${RUN_JAR:+${RUN_JAR}}; then
         local cmd="$1"
         local max_attempts=3
         local attempt=1
-        
+
         while [[ ${attempt} -le ${max_attempts} ]]; do
             echo "Attempt ${attempt}/${max_attempts}: ${cmd}"
             if eval "${cmd}"; then
@@ -189,18 +189,21 @@ if ! test -f ${RUN_JAR:+${RUN_JAR}}; then
             else
                 echo "Command failed on attempt ${attempt}"
                 if [[ ${attempt} -lt ${max_attempts} ]]; then
-                    sleep $((attempt * 5))  # Linear backoff
+                    sleep $((attempt * 5)) # Linear backoff
                 fi
                 ((attempt++))
             fi
         done
-        
+
         echo "Command failed after ${max_attempts} attempts"
         return 1
     }
 
     # Build generated code
-    cd "${DORIS_HOME}/gensrc/thrift" || { echo "Failed to change directory"; exit 1; }
+    cd "${DORIS_HOME}/gensrc/thrift" || {
+        echo "Failed to change directory"
+        exit 1
+    }
     if ! make; then
         echo "Make command failed in ${DORIS_HOME}/gensrc/thrift"
         exit 1
@@ -209,45 +212,60 @@ if ! test -f ${RUN_JAR:+${RUN_JAR}}; then
     cp -rf "${DORIS_HOME}/gensrc/build/gen_java/org/apache/doris/thrift" "${FRAMEWORK_APACHE_DIR}/doris/"
 
     # Navigate to framework directory and build with retry
-    cd "${DORIS_HOME}/regression-test/framework" || { echo "Failed to change directory"; exit 1; }
-    
+    cd "${DORIS_HOME}/regression-test/framework" || {
+        echo "Failed to change directory"
+        exit 1
+    }
+
     # First try to download dependencies only
     echo "Downloading dependencies..."
-    dep_output_file="$(mktemp -t doris-dependencies-XXXXXX.txt)" || { echo "Failed to create temporary file for dependency output"; exit 1; }
+    dep_output_file="$(mktemp -t doris-dependencies-XXXXXX.txt)" || {
+        echo "Failed to create temporary file for dependency output"
+        exit 1
+    }
     execute_maven_with_retry "${MVN_CMD} dependency:resolve -B -DskipTests=true -Dmdep.prependGroupId=true -DoutputFile=${dep_output_file}" || {
         echo "Failed to download dependencies"
         exit 1
     }
-    
+
     # Then package with retry
     echo "Building package..."
     execute_maven_with_retry "${MVN_CMD} clean package -B -DskipTests=true -Dmaven.javadoc.skip=true" || {
         echo "Failed to build package"
         exit 1
     }
-    
-    cd "${DORIS_HOME}" || { echo "Failed to return to DORIS_HOME"; exit 1; }
+
+    cd "${DORIS_HOME}" || {
+        echo "Failed to return to DORIS_HOME"
+        exit 1
+    }
 
     mkdir -p "${OUTPUT_DIR}"/{lib,log}
     cp -r "${REGRESSION_TEST_BUILD_DIR}"/regression-test-*.jar "${OUTPUT_DIR}/lib"
 
     echo "===== BUILD JAVA_UDF_SRC TO GENERATE JAR ====="
     mkdir -p "${DORIS_HOME}"/regression-test/suites/javaudf_p0/jars
-    cd "${DORIS_HOME}"/regression-test/java-udf-src || { echo "Failed to change directory to java-udf-src"; exit 1; }
-    
+    cd "${DORIS_HOME}"/regression-test/java-udf-src || {
+        echo "Failed to change directory to java-udf-src"
+        exit 1
+    }
+
     # Build UDF with retry
     execute_maven_with_retry "${MVN_CMD} clean package -B -DskipTests=true -Dmaven.javadoc.skip=true" || {
         echo "Failed to build UDF package"
         exit 1
     }
-    
+
     cp target/java-udf-case-jar-with-dependencies.jar "${DORIS_HOME}"/regression-test/suites/javaudf_p0/jars/
     # be and fe dir is compiled output
     mkdir -p "${DORIS_HOME}"/output/fe/custom_lib/
     mkdir -p "${DORIS_HOME}"/output/be/custom_lib/
     cp target/java-udf-case-jar-with-dependencies.jar "${DORIS_HOME}"/output/fe/custom_lib/
     cp target/java-udf-case-jar-with-dependencies.jar "${DORIS_HOME}"/output/be/custom_lib/
-    cd "${DORIS_HOME}" || { echo "Failed to return to DORIS_HOME"; exit 1; }
+    cd "${DORIS_HOME}" || {
+        echo "Failed to return to DORIS_HOME"
+        exit 1
+    }
 fi
 
 # check java home
@@ -272,12 +290,12 @@ for arg in "$@"; do
         SKIP_NEXT=0
         continue
     fi
-    
+
     if [[ "${arg}" == "-f" ]] || [[ "${arg}" == "--file" ]]; then
         SKIP_NEXT=1
         continue
     fi
-    
+
     NEW_ARGS+=("${arg}")
 done
 
@@ -286,7 +304,7 @@ if [[ -n "${FILE_PATH}" ]]; then
     # Extract directory (parent path)
     # e.g., "regression-test/suites/shape_check/tpch_sf1000/shape/q1.groovy" -> "regression-test/suites/shape_check/tpch_sf1000/shape"
     FILE_DIR=$(dirname "${FILE_PATH}")
-    
+
     # Extract suite name (filename without .groovy or .sql extension)
     # e.g., "q1.groovy" -> "q1" or "q01.sql" -> "q01"
     FILE_NAME=$(basename "${FILE_PATH}")
@@ -294,9 +312,9 @@ if [[ -n "${FILE_PATH}" ]]; then
     SUITE_NAME="${FILE_NAME%.groovy}"
     # Remove .sql extension if exists
     SUITE_NAME="${SUITE_NAME%.sql}"
-    
+
     echo "Converted -f ${FILE_PATH} to -d ${FILE_DIR} -s ${SUITE_NAME}"
-    
+
     # Add -d and -s to arguments
     NEW_ARGS+=("-d" "${FILE_DIR}" "-s" "${SUITE_NAME}")
 fi

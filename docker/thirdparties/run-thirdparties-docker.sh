@@ -51,7 +51,7 @@ HELP=0
 STOP=0
 NEED_RESERVE_PORTS=0
 export NEED_LOAD_DATA=1
-export LOAD_PARALLEL=$(( $(getconf _NPROCESSORS_ONLN) / 2 ))
+export LOAD_PARALLEL=$(($(getconf _NPROCESSORS_ONLN) / 2))
 export IP_HOST=$(ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1 | head -n 1)
 
 if ! OPTS="$(getopt \
@@ -201,7 +201,7 @@ for element in "${COMPONENTS_ARR[@]}"; do
         RUN_MARIADB=1
     elif [[ "${element}"x == "db2"x ]]; then
         RUN_DB2=1
-    elif [[ "${element}"x == "oceanbase"x ]];then
+    elif [[ "${element}"x == "oceanbase"x ]]; then
         RUN_OCEANBASE=1
     elif [[ "${element}"x == "lakesoul"x ]]; then
         RUN_LAKESOUL=1
@@ -376,7 +376,7 @@ start_hive2() {
     . "${ROOT}"/docker-compose/hive/hive-2x_settings.env
     envsubst <"${ROOT}"/docker-compose/hive/hive-2x.yaml.tpl >"${ROOT}"/docker-compose/hive/hive-2x.yaml
     envsubst <"${ROOT}"/docker-compose/hive/hadoop-hive.env.tpl >"${ROOT}"/docker-compose/hive/hadoop-hive-2x.env
-    envsubst <"${ROOT}"/docker-compose/hive/hadoop-hive-2x.env.tpl >> "${ROOT}"/docker-compose/hive/hadoop-hive-2x.env
+    envsubst <"${ROOT}"/docker-compose/hive/hadoop-hive-2x.env.tpl >>"${ROOT}"/docker-compose/hive/hadoop-hive-2x.env
     sudo docker compose -p ${CONTAINER_UID}hive2 -f "${ROOT}"/docker-compose/hive/hive-2x.yaml --env-file "${ROOT}"/docker-compose/hive/hadoop-hive-2x.env down
     if [[ "${STOP}" -ne 1 ]]; then
         sudo docker compose -p ${CONTAINER_UID}hive2 -f "${ROOT}"/docker-compose/hive/hive-2x.yaml --env-file "${ROOT}"/docker-compose/hive/hadoop-hive-2x.env up --build --remove-orphans -d --wait
@@ -390,7 +390,7 @@ start_hive3() {
     . "${ROOT}"/docker-compose/hive/hive-3x_settings.env
     envsubst <"${ROOT}"/docker-compose/hive/hive-3x.yaml.tpl >"${ROOT}"/docker-compose/hive/hive-3x.yaml
     envsubst <"${ROOT}"/docker-compose/hive/hadoop-hive.env.tpl >"${ROOT}"/docker-compose/hive/hadoop-hive-3x.env
-    envsubst <"${ROOT}"/docker-compose/hive/hadoop-hive-3x.env.tpl >> "${ROOT}"/docker-compose/hive/hadoop-hive-3x.env
+    envsubst <"${ROOT}"/docker-compose/hive/hadoop-hive-3x.env.tpl >>"${ROOT}"/docker-compose/hive/hadoop-hive-3x.env
     sudo docker compose -p ${CONTAINER_UID}hive3 -f "${ROOT}"/docker-compose/hive/hive-3x.yaml --env-file "${ROOT}"/docker-compose/hive/hadoop-hive-3x.env down
     if [[ "${STOP}" -ne 1 ]]; then
         sudo docker compose -p ${CONTAINER_UID}hive3 -f "${ROOT}"/docker-compose/hive/hive-3x.yaml --env-file "${ROOT}"/docker-compose/hive/hadoop-hive-3x.env up --build --remove-orphans -d --wait
@@ -409,28 +409,27 @@ start_iceberg() {
     if [[ "${STOP}" -ne 1 ]]; then
         if [[ ! -d "${ICEBERG_DIR}/data" ]]; then
             echo "${ICEBERG_DIR}/data does not exist"
-            cd "${ICEBERG_DIR}" \
-            && rm -f iceberg_data*.zip \
-            && wget -P "${ROOT}"/docker-compose/iceberg https://"${s3BucketName}.${s3Endpoint}"/regression/datalake/pipeline_data/iceberg_data_paimon_101.zip \
-            && sudo unzip iceberg_data_paimon_101.zip \
-            && sudo mv iceberg_data data \
-            && sudo rm -rf iceberg_data_paimon_101.zip
+            cd "${ICEBERG_DIR}" &&
+                rm -f iceberg_data*.zip &&
+                wget -P "${ROOT}"/docker-compose/iceberg https://"${s3BucketName}.${s3Endpoint}"/regression/datalake/pipeline_data/iceberg_data_paimon_101.zip &&
+                sudo unzip iceberg_data_paimon_101.zip &&
+                sudo mv iceberg_data data &&
+                sudo rm -rf iceberg_data_paimon_101.zip
             cd -
         else
             echo "${ICEBERG_DIR}/data exist, continue !"
         fi
 
-        if [[ ! -f "${ICEBERG_DIR}/data/input/jars/iceberg-aws-bundle-1.10.0.jar" ]]; then 
+        if [[ ! -f "${ICEBERG_DIR}/data/input/jars/iceberg-aws-bundle-1.10.0.jar" ]]; then
             echo "iceberg 1.10.0 jars does not exist"
-            cd "${ICEBERG_DIR}" \
-            && rm -f iceberg_1_10_0*.jars.tar.gz\
-            && wget -P "${ROOT}"/docker-compose/iceberg https://"${s3BucketName}.${s3Endpoint}"/regression/datalake/pipeline_data/iceberg_1_10_0.jars.tar.gz \
-            && sudo tar xzvf iceberg_1_10_0.jars.tar.gz -C "data/input/jars" \
-            && sudo rm -rf iceberg_1_10_0.jars.tar.gz
+            cd "${ICEBERG_DIR}" &&
+                rm -f iceberg_1_10_0*.jars.tar.gz && wget -P "${ROOT}"/docker-compose/iceberg https://"${s3BucketName}.${s3Endpoint}"/regression/datalake/pipeline_data/iceberg_1_10_0.jars.tar.gz &&
+                sudo tar xzvf iceberg_1_10_0.jars.tar.gz -C "data/input/jars" &&
+                sudo rm -rf iceberg_1_10_0.jars.tar.gz
             cd -
-        else 
+        else
             echo "iceberg 1.10.0 jars exist, continue !"
-        fi        
+        fi
 
         sudo docker compose -f "${ROOT}"/docker-compose/iceberg/iceberg.yaml --env-file "${ROOT}"/docker-compose/iceberg/iceberg.env up -d --wait
     fi
@@ -505,9 +504,9 @@ start_kerberos() {
     for i in {1..2}; do
         . "${ROOT}"/docker-compose/kerberos/kerberos${i}_settings.env
         envsubst <"${ROOT}"/docker-compose/kerberos/hadoop-hive.env.tpl >"${ROOT}"/docker-compose/kerberos/hadoop-hive-${i}.env
-        envsubst <"${ROOT}"/docker-compose/kerberos/conf/my.cnf.tpl > "${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/my.cnf
-        envsubst <"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/kdc.conf.tpl > "${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/kdc.conf
-        envsubst <"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/krb5.conf.tpl > "${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/krb5.conf
+        envsubst <"${ROOT}"/docker-compose/kerberos/conf/my.cnf.tpl >"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/my.cnf
+        envsubst <"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/kdc.conf.tpl >"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/kdc.conf
+        envsubst <"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/krb5.conf.tpl >"${ROOT}"/docker-compose/kerberos/conf/kerberos${i}/krb5.conf
     done
     sudo chmod a+w /etc/hosts
     sudo sed -i "1i${IP_HOST} hadoop-master" /etc/hosts
@@ -573,12 +572,12 @@ start_iceberg_rest() {
     echo "RUN_ICEBERG_REST"
     # iceberg-rest with multiple cloud storage backends
     ICEBERG_REST_DIR=${ROOT}/docker-compose/iceberg-rest
-    
+
     # generate iceberg-rest.yaml
     export CONTAINER_UID=${CONTAINER_UID}
     . "${ROOT}"/docker-compose/iceberg-rest/iceberg-rest_settings.env
     envsubst <"${ICEBERG_REST_DIR}/docker-compose.yaml.tpl" >"${ICEBERG_REST_DIR}/docker-compose.yaml"
-    
+
     sudo docker compose -f "${ICEBERG_REST_DIR}/docker-compose.yaml" down
     if [[ "${STOP}" -ne 1 ]]; then
         # Start all three REST catalogs (S3, OSS, COS)
@@ -606,102 +605,102 @@ fi
 declare -A pids
 
 if [[ "${RUN_ES}" -eq 1 ]]; then
-    start_es > start_es.log  2>&1 &
+    start_es >start_es.log 2>&1 &
     pids["es"]=$!
 fi
 
 if [[ "${RUN_MYSQL}" -eq 1 ]]; then
-    start_mysql > start_mysql.log 2>&1 &
+    start_mysql >start_mysql.log 2>&1 &
     pids["mysql"]=$!
 fi
 
 if [[ "${RUN_PG}" -eq 1 ]]; then
-    start_pg > start_pg.log 2>&1 &
+    start_pg >start_pg.log 2>&1 &
     pids["pg"]=$!
 fi
 
 if [[ "${RUN_ORACLE}" -eq 1 ]]; then
-    start_oracle > start_oracle.log 2>&1 &
+    start_oracle >start_oracle.log 2>&1 &
     pids["oracle"]=$!
 fi
 
 if [[ "${RUN_DB2}" -eq 1 ]]; then
-    start_db2 > start_db2.log 2>&1 &
+    start_db2 >start_db2.log 2>&1 &
     pids["db2"]=$!
 fi
 
 if [[ "${RUN_OCEANBASE}" -eq 1 ]]; then
-    start_oceanbase > start_oceanbase.log 2>&1 &
+    start_oceanbase >start_oceanbase.log 2>&1 &
     pids["oceanbase"]=$!
 fi
 
 if [[ "${RUN_SQLSERVER}" -eq 1 ]]; then
-    start_sqlserver > start_sqlserver.log 2>&1 &
+    start_sqlserver >start_sqlserver.log 2>&1 &
     pids["sqlserver"]=$!
 fi
 
 if [[ "${RUN_CLICKHOUSE}" -eq 1 ]]; then
-    start_clickhouse > start_clickhouse.log 2>&1 &
+    start_clickhouse >start_clickhouse.log 2>&1 &
     pids["clickhouse"]=$!
 fi
 
 if [[ "${RUN_KAFKA}" -eq 1 ]]; then
-    start_kafka > start_kafka.log 2>&1 &
+    start_kafka >start_kafka.log 2>&1 &
     pids["kafka"]=$!
 fi
 
 if [[ "${RUN_HIVE2}" -eq 1 ]]; then
-    start_hive2 > start_hive2.log 2>&1 &
+    start_hive2 >start_hive2.log 2>&1 &
     pids["hive2"]=$!
 fi
 
 if [[ "${RUN_HIVE3}" -eq 1 ]]; then
-    start_hive3 > start_hive3.log 2>&1 &
+    start_hive3 >start_hive3.log 2>&1 &
     pids["hive3"]=$!
 fi
 
 if [[ "${RUN_ICEBERG}" -eq 1 ]]; then
-    start_iceberg > start_iceberg.log 2>&1 &
+    start_iceberg >start_iceberg.log 2>&1 &
     pids["iceberg"]=$!
 fi
 
 if [[ "${RUN_ICEBERG_REST}" -eq 1 ]]; then
-    start_iceberg_rest > start_iceberg_rest.log 2>&1 &
+    start_iceberg_rest >start_iceberg_rest.log 2>&1 &
     pids["iceberg-rest"]=$!
 fi
 
 if [[ "${RUN_HUDI}" -eq 1 ]]; then
-    start_hudi > start_hudi.log 2>&1 &
+    start_hudi >start_hudi.log 2>&1 &
     pids["hudi"]=$!
 fi
 
 if [[ "${RUN_MARIADB}" -eq 1 ]]; then
-    start_mariadb > start_mariadb.log 2>&1 &
+    start_mariadb >start_mariadb.log 2>&1 &
     pids["mariadb"]=$!
 fi
 
 if [[ "${RUN_LAKESOUL}" -eq 1 ]]; then
-    start_lakesoul > start_lakesoule.log 2>&1 &
+    start_lakesoul >start_lakesoule.log 2>&1 &
     pids["lakesoul"]=$!
 fi
 
 if [[ "${RUN_MINIO}" -eq 1 ]]; then
-    start_minio > start_minio.log 2>&1 &
+    start_minio >start_minio.log 2>&1 &
     pids["minio"]=$!
 fi
 
 if [[ "${RUN_POLARIS}" -eq 1 ]]; then
-    start_polaris > start_polaris.log 2>&1 &
+    start_polaris >start_polaris.log 2>&1 &
     pids["polaris"]=$!
 fi
 
 if [[ "${RUN_KERBEROS}" -eq 1 ]]; then
-    start_kerberos > start_kerberos.log 2>&1 &
+    start_kerberos >start_kerberos.log 2>&1 &
     pids["kerberos"]=$!
 fi
 
 if [[ "${RUN_RANGER}" -eq 1 ]]; then
-    start_ranger > start_ranger.log 2>&1 &
+    start_ranger >start_ranger.log 2>&1 &
     pids["ranger"]=$!
 fi
 echo "waiting all dockers starting done"
