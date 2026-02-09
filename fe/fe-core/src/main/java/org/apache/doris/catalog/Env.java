@@ -7406,7 +7406,7 @@ public class Env {
         while (iterator.hasNext()) {
             Map.Entry<String, Long> entry = iterator.next();
             if (currentTs - entry.getValue() > expireTime) {
-                iterator.remove();
+                sessionReportTimeMap.remove(entry.getKey(), entry.getValue());
             }
         }
     }

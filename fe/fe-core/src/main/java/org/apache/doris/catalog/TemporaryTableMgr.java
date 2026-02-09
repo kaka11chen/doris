@@ -55,13 +55,14 @@ public class TemporaryTableMgr extends MasterDaemon {
 
                 String sessionId = Util.getTempTableSessionId(table.getName());
                 boolean needDelete = false;
-                if (!sessionReportTimeMap.containsKey(sessionId)) {
+                Long lastUpdateTime = sessionReportTimeMap.get(sessionId);
+                if (lastUpdateTime == null) {
                     LOG.info("Cannot find session id for table " + table.getName());
                     needDelete = true;
-                } else if (currentTs > sessionReportTimeMap.get(sessionId)
+                } else if (currentTs > lastUpdateTime
                         + Config.loss_conn_fe_temp_table_keep_second * 1000L) {
                     LOG.info("Temporary table " + table.getName() + " is out of time: "
-                            + new Date(sessionReportTimeMap.get(sessionId)) + ", current: " + new Date(currentTs));
+                            + new Date(lastUpdateTime) + ", current: " + new Date(currentTs));
                     needDelete = true;
                 }
 
