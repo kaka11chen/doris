@@ -142,15 +142,15 @@ query_array=$(seq 1 99)
 run_query() {
     local query_file=$1
     local query_name=$2
-    
+
     if [[ ! -f "${query_file}" ]]; then
         return
     fi
-    
+
     local cold=0
     local hot1=0
     local hot2=0
-    
+
     echo -ne "${query_name}\t" | tee -a result.csv
     start=$(date +%s%3N)
     if ! output=$(mysql -h"${FE_HOST}" -u"${USER}" -P"${FE_QUERY_PORT}" -D"${DB}" --comments \
@@ -201,7 +201,7 @@ run_query() {
 for i in ${query_array[@]}; do
     # Run main query file
     run_query "${TPCDS_QUERIES_DIR}/query${i}.sql" "query${i}"
-    
+
     # Run variant query file if exists
     run_query "${TPCDS_QUERIES_DIR}/query${i}_1.sql" "query${i}_1"
 done

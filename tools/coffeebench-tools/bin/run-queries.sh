@@ -73,7 +73,6 @@ if [[ "${HELP}" -eq 1 ]]; then
     usage
 fi
 
-
 check_prerequest() {
     local CMD=$1
     local NAME=$2

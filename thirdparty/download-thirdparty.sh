@@ -334,7 +334,7 @@ if [[ " ${TP_ARCHIVES[*]} " =~ " ROCKSDB " ]]; then
             patch -p1 <"${TP_PATCH_DIR}/rocksdb-5.14.2.patch"
             if [[ "$(uname -s)" == "Darwin" ]]; then
                 patch -p1 <"${TP_PATCH_DIR}/rocksdb-mac-compile-fix.patch"
-            fi 
+            fi
             touch "${PATCHED_MARK}"
         fi
         cd -
@@ -599,9 +599,9 @@ if [[ " ${TP_ARCHIVES[*]} " =~ " AZURE " ]]; then
     echo "Finished patching ${AZURE_SOURCE}"
 fi
 
-if [[ " ${TP_ARCHIVES[*]} " =~ " CCTZ " ]] ; then
+if [[ " ${TP_ARCHIVES[*]} " =~ " CCTZ " ]]; then
     cd $TP_SOURCE_DIR/$CCTZ_SOURCE
-    if [[ ! -f "$PATCHED_MARK" ]] ; then
+    if [[ ! -f "$PATCHED_MARK" ]]; then
         for patch_file in "${TP_PATCH_DIR}"/cctz-*; do
             echo "patch ${patch_file}"
             patch -p1 --ignore-whitespace <"${patch_file}"

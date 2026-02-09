@@ -28,8 +28,8 @@ set -eo pipefail
 VERSION="$1"
 
 if [ -z "$VERSION" ]; then
-  echo "Usage: sh download-prebuild-thirdparty.sh <version>"
-  exit 1
+    echo "Usage: sh download-prebuild-thirdparty.sh <version>"
+    exit 1
 fi
 
 # ----------------------------
@@ -39,13 +39,13 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 case "$OS" in
-  Darwin)
+Darwin)
     PLATFORM="darwin"
     ;;
-  Linux)
+Linux)
     PLATFORM="linux"
     ;;
-  *)
+*)
     echo "Unsupported OS: $OS"
     exit 1
     ;;
@@ -55,13 +55,13 @@ esac
 # Detect ARCH
 # ----------------------------
 case "$ARCH" in
-  x86_64|amd64)
+x86_64 | amd64)
     ARCH="x86_64"
     ;;
-  arm64|aarch64)
+arm64 | aarch64)
     ARCH="arm64"
     ;;
-  *)
+*)
     echo "Unsupported architecture: $ARCH"
     exit 1
     ;;
@@ -71,19 +71,19 @@ esac
 # Resolve base release tag
 # ----------------------------
 case "$VERSION" in
-  master|4.0)
+master | 4.0)
     RELEASE_TAG="automation"
     ;;
-  3.1)
+3.1)
     RELEASE_TAG="automation-3.1"
     ;;
-  3.0)
+3.0)
     RELEASE_TAG="automation-3.0"
     ;;
-  2.1)
+2.1)
     RELEASE_TAG="automation-2.1"
     ;;
-  *)
+*)
     echo "Unsupported version: $VERSION"
     exit 1
     ;;
@@ -95,26 +95,26 @@ esac
 FILENAME=""
 
 if [ "$PLATFORM" = "darwin" ]; then
-  FILENAME="doris-thirdparty-prebuilt-darwin-${ARCH}.tar.xz"
+    FILENAME="doris-thirdparty-prebuilt-darwin-${ARCH}.tar.xz"
 else
-  if [ "$ARCH" = "arm64" ]; then
-    case "$VERSION" in
-      master|4.0)
-        FILENAME="doris-thirdparty-prebuild-arm64.tar.xz"
-        ;;
-      3.1)
-        FILENAME="doris-thirdparty-3.1-prebuild-arm64.tar.xz"
-        ;;
-      3.0)
-        FILENAME="doris-thirdparty-3.0-prebuild-arm64.tar.xz"
-        ;;
-      2.1)
-        FILENAME="doris-thirdparty-2.1-prebuild-arm64.tar.xz"
-        ;;
-    esac
-  else
-    FILENAME="doris-thirdparty-prebuilt-linux-x86_64.tar.xz"
-  fi
+    if [ "$ARCH" = "arm64" ]; then
+        case "$VERSION" in
+        master | 4.0)
+            FILENAME="doris-thirdparty-prebuild-arm64.tar.xz"
+            ;;
+        3.1)
+            FILENAME="doris-thirdparty-3.1-prebuild-arm64.tar.xz"
+            ;;
+        3.0)
+            FILENAME="doris-thirdparty-3.0-prebuild-arm64.tar.xz"
+            ;;
+        2.1)
+            FILENAME="doris-thirdparty-2.1-prebuild-arm64.tar.xz"
+            ;;
+        esac
+    else
+        FILENAME="doris-thirdparty-prebuilt-linux-x86_64.tar.xz"
+    fi
 fi
 
 # ----------------------------
@@ -132,15 +132,14 @@ echo
 # Download
 # ----------------------------
 if command -v curl >/dev/null 2>&1; then
-  curl -fL -o "$FILENAME" "$URL"
+    curl -fL -o "$FILENAME" "$URL"
 elif command -v wget >/dev/null 2>&1; then
-  wget -O "$FILENAME" "$URL"
+    wget -O "$FILENAME" "$URL"
 else
-  echo "Error: curl or wget is required"
-  exit 1
+    echo "Error: curl or wget is required"
+    exit 1
 fi
 
 echo
 echo "Download completed:"
 echo "  $(pwd)/$FILENAME"
-

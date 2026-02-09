@@ -479,7 +479,6 @@ test="${DORIS_TEST_BINARY_DIR}/doris_be_test"
 profraw=${DORIS_TEST_BINARY_DIR}/doris_be_test.profraw
 profdata=${DORIS_TEST_BINARY_DIR}/doris_be_test.profdata
 
-
 if [[ ${GDB} -ge 1 ]]; then
     gdb --args "${test}" "${FILTER}"
     exit
