@@ -566,7 +566,7 @@ public class Env {
     private final List<String> forceSkipJournalIds = Arrays.asList(Config.force_skip_journal_ids);
 
     // all sessions' last heartbeat time of all fe
-    private static volatile Map<String, Long> sessionReportTimeMap = new HashMap<>();
+    private static volatile Map<String, Long> sessionReportTimeMap = new ConcurrentHashMap<>();
 
     private TokenManager tokenManager;
 
@@ -862,8 +862,7 @@ public class Env {
     }
 
     private void refreshSession(String sessionId) {
-        // TODO: do nothing now until we fix memory link on Env#sessionReportTimeMap and Env#aliveSessionSet
-        // sessionReportTimeMap.put(sessionId, System.currentTimeMillis());
+        sessionReportTimeMap.put(sessionId, System.currentTimeMillis());
     }
 
     public void checkAndRefreshSession(String sessionId) {
@@ -7393,12 +7392,23 @@ public class Env {
     }
 
     public void registerSessionInfo(String sessionId) {
-        // TODO: do nothing now until we fix memory link on Env#sessionReportTimeMap and Env#aliveSessionSet
-        // this.aliveSessionSet.add(sessionId);
+        this.aliveSessionSet.add(sessionId);
     }
 
     public void unregisterSessionInfo(String sessionId) {
         this.aliveSessionSet.remove(sessionId);
+    }
+
+    public void clearExpiredSession() {
+        long currentTs = System.currentTimeMillis();
+        long expireTime = Config.loss_conn_fe_temp_table_keep_second * 1000L;
+        Iterator<Map.Entry<String, Long>> iterator = sessionReportTimeMap.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Long> entry = iterator.next();
+            if (currentTs - entry.getValue() > expireTime) {
+                iterator.remove();
+            }
+        }
     }
 
     public List<String> getAllAliveSessionIds() {
