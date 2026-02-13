@@ -92,7 +92,8 @@ Status build_iceberg_rowid_column(const DataTypePtr& type, const std::string& fi
     ColumnNullable* nullable_col = check_and_get_column<ColumnNullable>(column.get());
     ColumnStruct* struct_col = nullptr;
     if (nullable_col != nullptr) {
-        struct_col = check_and_get_column<ColumnStruct>(nullable_col->get_nested_column_ptr().get());
+        struct_col =
+                check_and_get_column<ColumnStruct>(nullable_col->get_nested_column_ptr().get());
     } else {
         struct_col = check_and_get_column<ColumnStruct>(column.get());
     }
@@ -248,6 +249,92 @@ Status RowGroupReader::init(
                                  _lazy_read_ctx.missing_columns_conjuncts.begin(),
                                  _lazy_read_ctx.missing_columns_conjuncts.end());
         RETURN_IF_ERROR(_rewrite_dict_predicates());
+    }
+
+    // P0-3: Confirm lazy dict decode candidates are fully dictionary-encoded in this row group.
+    // Only active when lazy read is enabled and there are candidates.
+    if (_lazy_read_ctx.can_lazy_read && !_lazy_read_ctx.lazy_dict_decode_candidates.empty()) {
+        for (const auto& [col_name, slot_id] : _lazy_read_ctx.lazy_dict_decode_candidates) {
+            auto file_col_name = _table_info_node_ptr->children_file_column_name(col_name);
+            auto* field = schema.get_column(file_col_name);
+            if (field == nullptr) {
+                continue;
+            }
+            const auto& col_meta = _row_group_meta.columns[field->physical_column_index].meta_data;
+            if (is_dictionary_encoded(col_meta)) {
+                _lazy_dict_decode_cols.emplace_back(col_name, slot_id);
+            }
+        }
+    }
+
+    // P0-2: Initialize per-column predicate read order optimization.
+    // Classify _filter_conjuncts into per-column groups and multi-column group.
+    // Only activate when lazy read is enabled and there are multiple predicate columns.
+    if (config::enable_parquet_predicate_column_reorder && _lazy_read_ctx.can_lazy_read &&
+        _lazy_read_ctx.predicate_columns.first.size() > 1 && !_filter_conjuncts.empty()) {
+        const auto& pred_col_slot_ids = _lazy_read_ctx.predicate_columns.second;
+        // Build slot_id -> predicate column index map
+        std::unordered_map<int, size_t> slot_id_to_pred_idx;
+        for (size_t i = 0; i < pred_col_slot_ids.size(); ++i) {
+            slot_id_to_pred_idx[pred_col_slot_ids[i]] = i;
+        }
+
+        // Classify each conjunct
+        for (auto& conjunct : _filter_conjuncts) {
+            // Collect all slot_ids referenced by this conjunct
+            std::set<int> referenced_slot_ids;
+            _collect_slot_ids_from_expr(conjunct->root().get(), referenced_slot_ids);
+
+            // Check if all referenced slots belong to a single predicate column
+            size_t matched_pred_idx = std::numeric_limits<size_t>::max();
+            bool is_single_pred_col = true;
+            for (int sid : referenced_slot_ids) {
+                auto it = slot_id_to_pred_idx.find(sid);
+                if (it != slot_id_to_pred_idx.end()) {
+                    if (matched_pred_idx == std::numeric_limits<size_t>::max()) {
+                        matched_pred_idx = it->second;
+                    } else if (matched_pred_idx != it->second) {
+                        is_single_pred_col = false;
+                        break;
+                    }
+                }
+            }
+
+            if (is_single_pred_col && matched_pred_idx != std::numeric_limits<size_t>::max()) {
+                _per_col_conjuncts[matched_pred_idx].push_back(conjunct);
+            } else {
+                _multi_col_conjuncts.push_back(conjunct);
+            }
+        }
+
+        // Only activate if at least one predicate column has conjuncts
+        bool has_per_col = false;
+        for (auto& [idx, ctxs] : _per_col_conjuncts) {
+            if (!ctxs.empty()) {
+                has_per_col = true;
+                break;
+            }
+        }
+
+        if (has_per_col) {
+            _enable_per_column_lazy_read = true;
+            // Initialize ColumnReadOrderCtx with column indices and cost estimates
+            std::vector<size_t> col_indices;
+            std::unordered_map<size_t, size_t> col_cost_map;
+            size_t total_cost = 0;
+            for (size_t i = 0; i < _lazy_read_ctx.predicate_columns.first.size(); ++i) {
+                col_indices.push_back(i);
+                // Use a simple cost heuristic: columns with conjuncts get lower cost
+                // (they should be read first since they filter rows).
+                // For now, use uniform cost=1 for simplicity; the exploration will find
+                // the best order based on actual selectivity.
+                size_t cost = 1;
+                col_cost_map[i] = cost;
+                total_cost += cost;
+            }
+            _column_read_order_ctx =
+                    std::make_unique<ColumnReadOrderCtx>(col_indices, col_cost_map, total_cost);
+        }
     }
     return Status::OK();
 }
@@ -478,6 +565,33 @@ Status RowGroupReader::_read_column_data(Block* block,
                 break;
             }
         }
+        // P0-3: Also check lazy dict decode columns. These are lazy string columns
+        // confirmed as fully dict-encoded; we read them as int32 dict codes and
+        // convert back to strings after filtering.
+        if (!is_dict_filter) {
+            for (auto& lazy_dict_col : _lazy_dict_decode_cols) {
+                if (lazy_dict_col.first == read_col_name) {
+                    MutableColumnPtr dict_column = ColumnInt32::create();
+                    if (column_type->is_nullable()) {
+                        block->get_by_position((*_col_name_to_block_idx)[read_col_name]).type =
+                                std::make_shared<DataTypeNullable>(
+                                        std::make_shared<DataTypeInt32>());
+                        block->replace_by_position(
+                                (*_col_name_to_block_idx)[read_col_name],
+                                ColumnNullable::create(
+                                        std::move(dict_column),
+                                        ColumnUInt8::create(dict_column->size(), 0)));
+                    } else {
+                        block->get_by_position((*_col_name_to_block_idx)[read_col_name]).type =
+                                std::make_shared<DataTypeInt32>();
+                        block->replace_by_position((*_col_name_to_block_idx)[read_col_name],
+                                                   std::move(dict_column));
+                    }
+                    is_dict_filter = true;
+                    break;
+                }
+            }
+        }
 
         size_t col_read_rows = 0;
         bool col_eof = false;
@@ -517,6 +631,11 @@ Status RowGroupReader::_read_column_data(Block* block,
 
 Status RowGroupReader::_do_lazy_read(Block* block, size_t batch_size, size_t* read_rows,
                                      bool* batch_eof) {
+    // Dispatch to per-column lazy read when enabled (P0-2 optimization)
+    if (_enable_per_column_lazy_read) {
+        return _do_lazy_read_per_column(block, batch_size, read_rows, batch_eof);
+    }
+
     std::unique_ptr<FilterMap> filter_map_ptr = nullptr;
     size_t pre_read_rows;
     bool pre_eof;
@@ -685,8 +804,7 @@ Status RowGroupReader::_do_lazy_read(Block* block, size_t batch_size, size_t* re
         if (filter_map.has_filter()) {
             std::vector<uint32_t> predicate_columns = _lazy_read_ctx.all_predicate_col_ids;
             if (_iceberg_rowid_params.enabled) {
-                int row_id_idx =
-                        block->get_position_by_name(doris::BeConsts::ICEBERG_ROWID_COL);
+                int row_id_idx = block->get_position_by_name(doris::BeConsts::ICEBERG_ROWID_COL);
                 if (row_id_idx >= 0 &&
                     std::find(predicate_columns.begin(), predicate_columns.end(),
                               static_cast<uint32_t>(row_id_idx)) == predicate_columns.end()) {
@@ -703,6 +821,7 @@ Status RowGroupReader::_do_lazy_read(Block* block, size_t batch_size, size_t* re
     }
 
     _convert_dict_cols_to_string_cols(block);
+    _convert_lazy_dict_cols_to_string_cols(block);
 
     size_t column_num = block->columns();
     size_t column_size = 0;
@@ -940,12 +1059,10 @@ Status RowGroupReader::_append_iceberg_rowid_column(Block* block, size_t read_ro
     if (row_id_idx >= 0) {
         auto& col_with_type = block->get_by_position(static_cast<size_t>(row_id_idx));
         MutableColumnPtr row_id_column;
-        RETURN_IF_ERROR(build_iceberg_rowid_column(col_with_type.type,
-                                                   _iceberg_rowid_params.file_path,
-                                                   _current_batch_row_ids,
-                                                   _iceberg_rowid_params.partition_spec_id,
-                                                   _iceberg_rowid_params.partition_data_json,
-                                                   &row_id_column));
+        RETURN_IF_ERROR(build_iceberg_rowid_column(
+                col_with_type.type, _iceberg_rowid_params.file_path, _current_batch_row_ids,
+                _iceberg_rowid_params.partition_spec_id, _iceberg_rowid_params.partition_data_json,
+                &row_id_column));
         col_with_type.column = std::move(row_id_column);
     } else {
         DataTypes field_types;
@@ -959,18 +1076,17 @@ Status RowGroupReader::_append_iceberg_rowid_column(Block* block, size_t read_ro
 
         auto row_id_type = std::make_shared<DataTypeStruct>(field_types, field_names);
         MutableColumnPtr row_id_column;
-        RETURN_IF_ERROR(build_iceberg_rowid_column(row_id_type, _iceberg_rowid_params.file_path,
-                                                   _current_batch_row_ids,
-                                                   _iceberg_rowid_params.partition_spec_id,
-                                                   _iceberg_rowid_params.partition_data_json,
-                                                   &row_id_column));
+        RETURN_IF_ERROR(build_iceberg_rowid_column(
+                row_id_type, _iceberg_rowid_params.file_path, _current_batch_row_ids,
+                _iceberg_rowid_params.partition_spec_id, _iceberg_rowid_params.partition_data_json,
+                &row_id_column));
         int insert_pos = _iceberg_rowid_params.row_id_column_pos;
         if (insert_pos < 0 || insert_pos > static_cast<int>(block->columns())) {
             insert_pos = static_cast<int>(block->columns());
         }
         block->insert(static_cast<size_t>(insert_pos),
                       ColumnWithTypeAndName(std::move(row_id_column), row_id_type,
-                                           doris::BeConsts::ICEBERG_ROWID_COL));
+                                            doris::BeConsts::ICEBERG_ROWID_COL));
     }
 
     if (_col_name_to_block_idx != nullptr) {
@@ -1263,6 +1379,431 @@ void RowGroupReader::_convert_dict_cols_to_string_cols(Block* block) {
                                        std::move(string_column));
         }
     }
+}
+
+void RowGroupReader::_convert_lazy_dict_cols_to_string_cols(Block* block) {
+    for (auto& lazy_dict_col : _lazy_dict_decode_cols) {
+        if (!_col_name_to_block_idx->contains(lazy_dict_col.first)) {
+            // Column may not be present if block was cleared (filter_all path).
+            continue;
+        }
+        ColumnWithTypeAndName& column_with_type_and_name =
+                block->get_by_position((*_col_name_to_block_idx)[lazy_dict_col.first]);
+        const ColumnPtr& column = column_with_type_and_name.column;
+        // If column is empty (e.g., cleared during filter_all), skip conversion.
+        if (column->size() == 0) {
+            // Still need to restore the type to string for consistency.
+            if (column_with_type_and_name.type->is_nullable()) {
+                column_with_type_and_name.type =
+                        std::make_shared<DataTypeNullable>(std::make_shared<DataTypeString>());
+                block->replace_by_position(
+                        (*_col_name_to_block_idx)[lazy_dict_col.first],
+                        ColumnNullable::create(ColumnString::create(), ColumnUInt8::create()));
+            } else {
+                column_with_type_and_name.type = std::make_shared<DataTypeString>();
+                block->replace_by_position((*_col_name_to_block_idx)[lazy_dict_col.first],
+                                           ColumnString::create());
+            }
+            continue;
+        }
+        if (const auto* nullable_column = check_and_get_column<ColumnNullable>(*column)) {
+            const ColumnPtr& nested_column = nullable_column->get_nested_column_ptr();
+            const auto* dict_column = assert_cast<const ColumnInt32*>(nested_column.get());
+            DCHECK(dict_column);
+
+            MutableColumnPtr string_column =
+                    _column_readers[lazy_dict_col.first]->convert_dict_column_to_string_column(
+                            dict_column);
+
+            column_with_type_and_name.type =
+                    std::make_shared<DataTypeNullable>(std::make_shared<DataTypeString>());
+            block->replace_by_position(
+                    (*_col_name_to_block_idx)[lazy_dict_col.first],
+                    ColumnNullable::create(std::move(string_column),
+                                           nullable_column->get_null_map_column_ptr()));
+        } else {
+            const auto* dict_column = assert_cast<const ColumnInt32*>(column.get());
+            MutableColumnPtr string_column =
+                    _column_readers[lazy_dict_col.first]->convert_dict_column_to_string_column(
+                            dict_column);
+
+            column_with_type_and_name.type = std::make_shared<DataTypeString>();
+            block->replace_by_position((*_col_name_to_block_idx)[lazy_dict_col.first],
+                                       std::move(string_column));
+        }
+    }
+}
+
+void RowGroupReader::_collect_slot_ids_from_expr(const VExpr* expr, std::set<int>& slot_ids) {
+    if (expr->is_slot_ref()) {
+        const auto* slot_ref = static_cast<const VSlotRef*>(expr);
+        slot_ids.insert(slot_ref->slot_id());
+    }
+    for (auto& child : expr->children()) {
+        _collect_slot_ids_from_expr(child.get(), slot_ids);
+    }
+}
+
+Status RowGroupReader::_do_lazy_read_per_column(Block* block, size_t batch_size, size_t* read_rows,
+                                                bool* batch_eof) {
+    // This method implements per-column predicate reading with intermediate filtering.
+    // Instead of reading all predicate columns at once, it reads them one by one,
+    // evaluating per-column conjuncts after each column. This allows highly-selective
+    // columns to reduce the number of rows decoded for subsequent columns.
+    //
+    // The overall structure mirrors _do_lazy_read(), but Phase 1 is changed from
+    // "read all predicate columns" to "read one column at a time + intermediate filter".
+
+    std::unique_ptr<FilterMap> filter_map_ptr = nullptr;
+    size_t pre_read_rows;
+    bool pre_eof;
+    std::vector<uint32_t> columns_to_filter;
+    uint32_t origin_column_num = block->columns();
+    columns_to_filter.resize(origin_column_num);
+    for (uint32_t i = 0; i < origin_column_num; ++i) {
+        columns_to_filter[i] = i;
+    }
+    IColumn::Filter result_filter;
+    size_t pre_raw_read_rows = 0;
+
+    const auto& pred_col_names = _lazy_read_ctx.predicate_columns.first;
+
+    while (!_state->is_cancelled()) {
+        pre_read_rows = 0;
+        pre_eof = false;
+
+        // Phase 1: Read predicate columns one by one with intermediate filtering.
+        // Get the column read order from the adaptive context.
+        const auto& read_order = _column_read_order_ctx->get_column_read_order();
+        size_t round_cost = 0;
+        double first_selectivity = -1;
+
+        // We accumulate a combined filter across all predicate columns.
+        IColumn::Filter combined_filter;
+        bool has_combined_filter = false;
+        bool can_filter_all = false;
+
+        // We need to read columns with filter_map from previously-evaluated predicates.
+        // For the first column, there's no filter. For subsequent columns, we pass the
+        // accumulated filter_map so filtered rows can be skipped at the decoder level.
+        FilterMap intermediate_filter_map;
+
+        for (size_t round = 0; round < read_order.size(); ++round) {
+            size_t col_idx = read_order[round];
+            const std::string& col_name = pred_col_names[col_idx];
+
+            round_cost += _column_read_order_ctx->get_column_cost(col_idx);
+
+            // Read this single predicate column.
+            std::vector<std::string> single_col = {col_name};
+            size_t col_read_rows = 0;
+            bool col_eof = false;
+            RETURN_IF_ERROR(_read_column_data(block, single_col, batch_size, &col_read_rows,
+                                              &col_eof, intermediate_filter_map));
+
+            if (round == 0) {
+                pre_read_rows = col_read_rows;
+                pre_eof = col_eof;
+            }
+
+            // Evaluate per-column conjuncts if this column has any.
+            auto conj_it = _per_col_conjuncts.find(col_idx);
+            if (conj_it != _per_col_conjuncts.end() && !conj_it->second.empty()) {
+                // Need to fill partition/missing columns that this conjunct may reference
+                // before evaluating. (Partition/missing conjuncts are handled separately.)
+                bool resize_first_column = _lazy_read_ctx.resize_first_column;
+                if (resize_first_column && _iceberg_rowid_params.enabled) {
+                    int row_id_idx =
+                            block->get_position_by_name(doris::BeConsts::ICEBERG_ROWID_COL);
+                    if (row_id_idx == 0) {
+                        resize_first_column = false;
+                    }
+                }
+                if (resize_first_column) {
+                    block->get_by_position(0).column->assume_mutable()->resize(pre_read_rows);
+                }
+
+                IColumn::Filter col_filter(pre_read_rows, static_cast<unsigned char>(1));
+                bool col_can_filter_all = false;
+
+                // Apply existing combined_filter as a pre-filter
+                std::vector<IColumn::Filter*> filters;
+                if (has_combined_filter) {
+                    filters.push_back(&combined_filter);
+                }
+
+                {
+                    SCOPED_RAW_TIMER(&_predicate_filter_time);
+                    RETURN_IF_ERROR(VExprContext::execute_conjuncts(
+                            conj_it->second, &filters, block, &col_filter, &col_can_filter_all));
+                }
+
+                if (resize_first_column) {
+                    block->get_by_position(0).column->assume_mutable()->clear();
+                }
+
+                if (col_can_filter_all) {
+                    can_filter_all = true;
+                    if (first_selectivity < 0) {
+                        first_selectivity = 0;
+                    }
+                    break;
+                }
+
+                // Merge col_filter into combined_filter
+                if (!has_combined_filter) {
+                    combined_filter = std::move(col_filter);
+                    has_combined_filter = true;
+                } else {
+                    for (size_t i = 0; i < pre_read_rows; ++i) {
+                        combined_filter[i] &= col_filter[i];
+                    }
+                }
+
+                if (first_selectivity < 0 && has_combined_filter) {
+                    size_t hit = 0;
+                    for (size_t i = 0; i < pre_read_rows; ++i) {
+                        hit += combined_filter[i];
+                    }
+                    first_selectivity =
+                            static_cast<double>(hit) / static_cast<double>(pre_read_rows);
+                }
+
+                // Update intermediate_filter_map for subsequent columns.
+                // This lets the next column's reader skip filtered rows at decode level.
+                if (has_combined_filter && round + 1 < read_order.size()) {
+                    // Check if all rows are filtered
+                    bool all_filtered = true;
+                    for (size_t i = 0; i < pre_read_rows; ++i) {
+                        if (combined_filter[i]) {
+                            all_filtered = false;
+                            break;
+                        }
+                    }
+                    if (all_filtered) {
+                        can_filter_all = true;
+                        break;
+                    }
+                    RETURN_IF_ERROR(intermediate_filter_map.init(combined_filter.data(),
+                                                                 pre_read_rows, false));
+                }
+            }
+        }
+
+        _column_read_order_ctx->update(round_cost, first_selectivity >= 0 ? first_selectivity : 1);
+
+        if (pre_read_rows == 0) {
+            DCHECK_EQ(pre_eof, true);
+            break;
+        }
+        pre_raw_read_rows += pre_read_rows;
+
+        // Fill partition and missing columns for predicate evaluation
+        RETURN_IF_ERROR(_fill_partition_columns(block, pre_read_rows,
+                                                _lazy_read_ctx.predicate_partition_columns));
+        RETURN_IF_ERROR(_fill_missing_columns(block, pre_read_rows,
+                                              _lazy_read_ctx.predicate_missing_columns));
+        RETURN_IF_ERROR(_fill_row_id_columns(block, pre_read_rows, false));
+        RETURN_IF_ERROR(_append_iceberg_rowid_column(block, pre_read_rows, false));
+
+        RETURN_IF_ERROR(_build_pos_delete_filter(pre_read_rows));
+
+        // Now evaluate multi-column conjuncts and position delete filter.
+        {
+            SCOPED_RAW_TIMER(&_predicate_filter_time);
+
+            bool resize_first_column = _lazy_read_ctx.resize_first_column;
+            if (resize_first_column && _iceberg_rowid_params.enabled) {
+                int row_id_idx = block->get_position_by_name(doris::BeConsts::ICEBERG_ROWID_COL);
+                if (row_id_idx == 0) {
+                    resize_first_column = false;
+                }
+            }
+
+            if (!can_filter_all) {
+                // Initialize result_filter from combined_filter or fresh
+                if (has_combined_filter) {
+                    result_filter = std::move(combined_filter);
+                } else {
+                    result_filter.assign(pre_read_rows, static_cast<unsigned char>(1));
+                }
+
+                // Evaluate multi-column conjuncts
+                if (!_multi_col_conjuncts.empty()) {
+                    if (resize_first_column) {
+                        block->get_by_position(0).column->assume_mutable()->resize(pre_read_rows);
+                    }
+
+                    std::vector<IColumn::Filter*> filters;
+                    if (_position_delete_ctx.has_filter) {
+                        filters.push_back(_pos_delete_filter_ptr.get());
+                    }
+
+                    bool multi_can_filter_all = false;
+                    {
+                        SCOPED_RAW_TIMER(&_predicate_filter_time);
+                        RETURN_IF_ERROR(VExprContext::execute_conjuncts(
+                                _multi_col_conjuncts, &filters, block, &result_filter,
+                                &multi_can_filter_all));
+                    }
+
+                    if (resize_first_column) {
+                        block->get_by_position(0).column->assume_mutable()->clear();
+                    }
+
+                    if (multi_can_filter_all) {
+                        can_filter_all = true;
+                    }
+                } else if (_position_delete_ctx.has_filter) {
+                    // Apply position delete filter to result_filter
+                    const auto* pos_filter = _pos_delete_filter_ptr->data();
+                    for (size_t i = 0; i < pre_read_rows; ++i) {
+                        result_filter[i] &= pos_filter[i];
+                    }
+                    // Check if all filtered
+                    bool all_zero = true;
+                    for (size_t i = 0; i < pre_read_rows; ++i) {
+                        if (result_filter[i]) {
+                            all_zero = false;
+                            break;
+                        }
+                    }
+                    if (all_zero) {
+                        can_filter_all = true;
+                    }
+                }
+            } else {
+                result_filter.assign(pre_read_rows, static_cast<unsigned char>(0));
+            }
+        }
+
+        const uint8_t* __restrict filter_map_data = result_filter.data();
+        filter_map_ptr = std::make_unique<FilterMap>();
+        RETURN_IF_ERROR(filter_map_ptr->init(filter_map_data, pre_read_rows, can_filter_all));
+        if (filter_map_ptr->filter_all()) {
+            {
+                SCOPED_RAW_TIMER(&_predicate_filter_time);
+                for (const auto& col : _lazy_read_ctx.predicate_columns.first) {
+                    block->get_by_position((*_col_name_to_block_idx)[col])
+                            .column->assume_mutable()
+                            ->clear();
+                }
+                for (const auto& col : _lazy_read_ctx.predicate_partition_columns) {
+                    block->get_by_position((*_col_name_to_block_idx)[col.first])
+                            .column->assume_mutable()
+                            ->clear();
+                }
+                for (const auto& col : _lazy_read_ctx.predicate_missing_columns) {
+                    block->get_by_position((*_col_name_to_block_idx)[col.first])
+                            .column->assume_mutable()
+                            ->clear();
+                }
+                if (_row_id_column_iterator_pair.first != nullptr) {
+                    block->get_by_position(_row_id_column_iterator_pair.second)
+                            .column->assume_mutable()
+                            ->clear();
+                }
+                if (_iceberg_rowid_params.enabled) {
+                    int row_id_idx =
+                            block->get_position_by_name(doris::BeConsts::ICEBERG_ROWID_COL);
+                    if (row_id_idx >= 0) {
+                        block->get_by_position(static_cast<size_t>(row_id_idx))
+                                .column->assume_mutable()
+                                ->clear();
+                    }
+                }
+                Block::erase_useless_column(block, origin_column_num);
+            }
+
+            if (!pre_eof) {
+                _cached_filtered_rows += pre_read_rows;
+                if (pre_raw_read_rows >= config::doris_scanner_row_num) {
+                    *read_rows = 0;
+                    _convert_dict_cols_to_string_cols(block);
+                    return Status::OK();
+                }
+            } else {
+                *read_rows = 0;
+                *batch_eof = true;
+                _lazy_read_filtered_rows += (pre_read_rows + _cached_filtered_rows);
+                _convert_dict_cols_to_string_cols(block);
+                return Status::OK();
+            }
+        } else {
+            break;
+        }
+    }
+    if (_state->is_cancelled()) {
+        return Status::Cancelled("cancelled");
+    }
+
+    if (filter_map_ptr == nullptr) {
+        DCHECK_EQ(pre_read_rows + _cached_filtered_rows, 0);
+        *read_rows = 0;
+        *batch_eof = true;
+        return Status::OK();
+    }
+
+    FilterMap& filter_map = *filter_map_ptr;
+    DorisUniqueBufferPtr<uint8_t> rebuild_filter_map = nullptr;
+    if (_cached_filtered_rows != 0) {
+        RETURN_IF_ERROR(_rebuild_filter_map(filter_map, rebuild_filter_map, pre_read_rows));
+        pre_read_rows += _cached_filtered_rows;
+        _cached_filtered_rows = 0;
+    }
+
+    // Phase 2: Read lazy columns (same as original _do_lazy_read)
+    size_t lazy_read_rows;
+    bool lazy_eof;
+    RETURN_IF_ERROR(_read_column_data(block, _lazy_read_ctx.lazy_read_columns, pre_read_rows,
+                                      &lazy_read_rows, &lazy_eof, filter_map));
+
+    if (pre_read_rows != lazy_read_rows) {
+        return Status::Corruption("Can't read the same number of rows when doing lazy read");
+    }
+
+    // Filter data in predicate columns and remove filter column
+    {
+        SCOPED_RAW_TIMER(&_predicate_filter_time);
+        if (filter_map.has_filter()) {
+            std::vector<uint32_t> predicate_columns = _lazy_read_ctx.all_predicate_col_ids;
+            if (_iceberg_rowid_params.enabled) {
+                int row_id_idx = block->get_position_by_name(doris::BeConsts::ICEBERG_ROWID_COL);
+                if (row_id_idx >= 0 &&
+                    std::find(predicate_columns.begin(), predicate_columns.end(),
+                              static_cast<uint32_t>(row_id_idx)) == predicate_columns.end()) {
+                    predicate_columns.push_back(static_cast<uint32_t>(row_id_idx));
+                }
+            }
+            RETURN_IF_CATCH_EXCEPTION(
+                    Block::filter_block_internal(block, predicate_columns, result_filter));
+            Block::erase_useless_column(block, origin_column_num);
+        } else {
+            Block::erase_useless_column(block, origin_column_num);
+        }
+    }
+
+    _convert_dict_cols_to_string_cols(block);
+    _convert_lazy_dict_cols_to_string_cols(block);
+
+    size_t column_num = block->columns();
+    size_t column_size = 0;
+    for (int i = 0; i < column_num; ++i) {
+        size_t cz = block->get_by_position(i).column->size();
+        if (column_size != 0 && cz != 0) {
+            DCHECK_EQ(column_size, cz);
+        }
+        if (cz != 0) {
+            column_size = cz;
+        }
+    }
+    _lazy_read_filtered_rows += pre_read_rows - column_size;
+    *read_rows = column_size;
+
+    *batch_eof = pre_eof;
+    RETURN_IF_ERROR(_fill_partition_columns(block, column_size, _lazy_read_ctx.partition_columns));
+    RETURN_IF_ERROR(_fill_missing_columns(block, column_size, _lazy_read_ctx.missing_columns));
+    return Status::OK();
 }
 
 ParquetColumnReader::ColumnStatistics RowGroupReader::merged_column_statistics() {
