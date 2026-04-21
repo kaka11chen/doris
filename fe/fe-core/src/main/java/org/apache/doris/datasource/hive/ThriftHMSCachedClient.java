@@ -447,7 +447,9 @@ public class ThriftHMSCachedClient implements HMSCachedClient {
                 throw e;
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            LOG.warn("Failed to get table column statistics for {}.{} from hms client, return empty stats.",
+                    dbName, tblName, e);
+            return Collections.emptyList();
         }
     }
 
@@ -462,7 +464,9 @@ public class ThriftHMSCachedClient implements HMSCachedClient {
                 throw e;
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            LOG.warn("Failed to get partition column statistics for {}.{} from hms client, return empty stats.",
+                    dbName, tblName, e);
+            return Collections.emptyMap();
         }
     }
 

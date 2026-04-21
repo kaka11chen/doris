@@ -29,6 +29,7 @@ import org.apache.commons.pool2.impl.GenericObjectPool;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+import org.apache.hadoop.hive.metastore.api.ColumnStatisticsObj;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.LockResponse;
 import org.apache.hadoop.hive.metastore.api.LockState;
@@ -43,6 +44,8 @@ import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -245,6 +248,30 @@ public class ThriftHMSCachedClientTest {
         assertBrokenBorrowerIsNotReused(cachedClient);
     }
 
+    @Test
+    public void testGetTableColumnStatisticsReturnsEmptyWhenMetastoreFails() throws Exception {
+        provider.tableColumnStatisticsFailure = new RuntimeException("table column statistics failed");
+        ThriftHMSCachedClient cachedClient = newClient(1);
+
+        List<ColumnStatisticsObj> stats = cachedClient.getTableColumnStatistics(
+                "db1", "tbl1", Collections.singletonList("c1"));
+
+        Assert.assertTrue(stats.isEmpty());
+        assertBrokenBorrowerIsNotReused(cachedClient);
+    }
+
+    @Test
+    public void testGetPartitionColumnStatisticsReturnsEmptyWhenMetastoreFails() throws Exception {
+        provider.partitionColumnStatisticsFailure = new RuntimeException("partition column statistics failed");
+        ThriftHMSCachedClient cachedClient = newClient(1);
+
+        Map<String, List<ColumnStatisticsObj>> stats = cachedClient.getPartitionColumnStatistics(
+                "db1", "tbl1", Collections.singletonList("p1"), Collections.singletonList("c1"));
+
+        Assert.assertTrue(stats.isEmpty());
+        assertBrokenBorrowerIsNotReused(cachedClient);
+    }
+
     private void assertBrokenBorrowerIsNotReused(ThriftHMSCachedClient cachedClient) throws Exception {
         Assert.assertEquals(0, getPool(cachedClient).getNumIdle());
         Assert.assertEquals(0, getPool(cachedClient).getNumActive());
@@ -304,6 +331,8 @@ public class ThriftHMSCachedClientTest {
         private volatile RuntimeException alterPartitionFailure;
         private volatile RuntimeException addPartitionsFailure;
         private volatile RuntimeException dropPartitionFailure;
+        private volatile RuntimeException tableColumnStatisticsFailure;
+        private volatile RuntimeException partitionColumnStatisticsFailure;
 
         @Override
         public IMetaStoreClient create(HiveConf hiveConf) {
@@ -355,6 +384,18 @@ public class ThriftHMSCachedClientTest {
                     throw dropPartitionFailure;
                 }
                 return true;
+            }
+            if ("getTableColumnStatistics".equals(methodName)) {
+                if (tableColumnStatisticsFailure != null) {
+                    throw tableColumnStatisticsFailure;
+                }
+                return Collections.emptyList();
+            }
+            if ("getPartitionColumnStatistics".equals(methodName)) {
+                if (partitionColumnStatisticsFailure != null) {
+                    throw partitionColumnStatisticsFailure;
+                }
+                return Collections.emptyMap();
             }
             if ("lock".equals(methodName)) {
                 return newLockResponse(nextLockState());
