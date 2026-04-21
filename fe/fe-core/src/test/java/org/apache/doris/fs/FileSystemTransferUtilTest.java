@@ -20,7 +20,10 @@ package org.apache.doris.fs;
 import org.apache.doris.filesystem.FileEntry;
 import org.apache.doris.filesystem.FileSystem;
 import org.apache.doris.filesystem.FileSystemTransferUtil;
+import org.apache.doris.filesystem.FileIterator;
 import org.apache.doris.filesystem.Location;
+import org.apache.doris.filesystem.DorisInputFile;
+import org.apache.doris.filesystem.DorisOutputFile;
 import org.apache.doris.filesystem.local.LocalFileSystemProvider;
 
 import org.junit.jupiter.api.AfterEach;
@@ -32,11 +35,14 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class FileSystemTransferUtilTest {
@@ -169,6 +175,22 @@ public class FileSystemTransferUtilTest {
     }
 
     @Test
+    public void testGlobListNoWildcardDoesNotMatchSiblingPrefixesOnObjectStore() throws IOException {
+        FileSystem prefixListingFs = new PrefixListingFileSystem(Arrays.asList(
+                fileEntry("s3://bucket/benchmark/hive/tpcds1000/store/part-000.orc"),
+                fileEntry("s3://bucket/benchmark/hive/tpcds1000/store/nested/part-001.orc"),
+                fileEntry("s3://bucket/benchmark/hive/tpcds1000/store_sales/part-000.orc"),
+                fileEntry("s3://bucket/benchmark/hive/tpcds1000/store_returns/part-000.orc")));
+
+        List<FileEntry> entries = FileSystemTransferUtil.globList(
+                prefixListingFs, "s3://bucket/benchmark/hive/tpcds1000/store", true);
+
+        Assertions.assertEquals(Arrays.asList(
+                fileEntry("s3://bucket/benchmark/hive/tpcds1000/store/part-000.orc"),
+                fileEntry("s3://bucket/benchmark/hive/tpcds1000/store/nested/part-001.orc")), entries);
+    }
+
+    @Test
     public void testGlobListWithStarWildcard() throws IOException {
         writeFile(tempDir.resolve("part-0001.snappy.parquet"), "p1");
         writeFile(tempDir.resolve("part-0002.snappy.parquet"), "p2");
@@ -214,5 +236,74 @@ public class FileSystemTransferUtilTest {
         Pattern p = FileSystemTransferUtil.globToRegex("s3://bucket/file.parquet");
         Assertions.assertTrue(p.matcher("s3://bucket/file.parquet").matches());
         Assertions.assertFalse(p.matcher("s3://bucket/fileXparquet").matches());
+    }
+
+    private static FileEntry fileEntry(String uri) {
+        return new FileEntry(Location.of(uri), 1L, false, 0L, null);
+    }
+
+    private static final class PrefixListingFileSystem implements FileSystem {
+        private final List<FileEntry> entries;
+
+        private PrefixListingFileSystem(List<FileEntry> entries) {
+            this.entries = entries;
+        }
+
+        @Override
+        public boolean exists(Location location) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void mkdirs(Location location) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void delete(Location location, boolean recursive) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void rename(Location src, Location dst) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public FileIterator list(Location location) {
+            List<FileEntry> matches = entries.stream()
+                    .filter(entry -> entry.location().uri().startsWith(location.uri()))
+                    .collect(Collectors.toList());
+            Iterator<FileEntry> iterator = matches.iterator();
+            return new FileIterator() {
+                @Override
+                public boolean hasNext() {
+                    return iterator.hasNext();
+                }
+
+                @Override
+                public FileEntry next() {
+                    return iterator.next();
+                }
+
+                @Override
+                public void close() {
+                }
+            };
+        }
+
+        @Override
+        public DorisInputFile newInputFile(Location location) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public DorisOutputFile newOutputFile(Location location) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void close() {
+        }
     }
 }

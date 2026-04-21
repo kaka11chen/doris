@@ -86,13 +86,14 @@ public final class FileSystemTransferUtil {
     public static List<FileEntry> globList(FileSystem fs, String locationStr,
             boolean recursive) throws IOException {
         int wildcardIdx = indexOfFirstWildcard(locationStr);
+        Location listingRoot = wildcardIdx < 0 ? Location.of(locationStr) : null;
         String basePath = wildcardIdx < 0
-                ? locationStr
+                ? ensureTrailingSlash(locationStr)
                 : locationStr.substring(0, locationStr.lastIndexOf('/', wildcardIdx) + 1);
         Pattern pattern = wildcardIdx < 0 ? null : globToRegex(locationStr);
 
         List<FileEntry> result = new ArrayList<>();
-        collectEntries(fs, Location.of(basePath), pattern, recursive, result);
+        collectEntries(fs, Location.of(basePath), pattern, recursive, listingRoot, result);
         return result;
     }
 
@@ -107,14 +108,17 @@ public final class FileSystemTransferUtil {
     }
 
     private static void collectEntries(FileSystem fs, Location base,
-            Pattern pattern, boolean recursive,
+            Pattern pattern, boolean recursive, Location listingRoot,
             List<FileEntry> result) throws IOException {
         try (FileIterator iter = fs.list(base)) {
             while (iter.hasNext()) {
                 FileEntry entry = iter.next();
+                if (listingRoot != null && !entry.location().startsWith(listingRoot)) {
+                    continue;
+                }
                 if (entry.isDirectory()) {
                     if (recursive) {
-                        collectEntries(fs, entry.location(), pattern, true, result);
+                        collectEntries(fs, entry.location(), pattern, true, listingRoot, result);
                     } else if (pattern != null && pattern.matcher(entry.location().uri()).matches()) {
                         // Include matching directories only when an explicit glob pattern is present.
                         // Without a pattern the caller expects a plain file listing.
@@ -139,6 +143,10 @@ public final class FileSystemTransferUtil {
             return star;
         }
         return Math.min(star, question);
+    }
+
+    private static String ensureTrailingSlash(String locationStr) {
+        return locationStr.endsWith("/") ? locationStr : locationStr + "/";
     }
 
     /** Converts a glob pattern (with * and ?) to a java.util.regex.Pattern. */
