@@ -15,12 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "format/table/table_schema_change_helper.h"
-
 #include <gtest/gtest.h>
 
 #include <memory>
 #include <string>
+
+#include "format/table/table_schema_change_helper.h"
 
 namespace doris {
 
@@ -276,7 +276,7 @@ TEST_F(SchemaNodeTest, MapNodeGetKeyAndValue) {
 
 TEST_F(SchemaNodeTest, MapNodeGetElementThrows) {
     auto map = std::make_shared<MapNode>(std::make_shared<ScalarNode>(),
-                                          std::make_shared<ScalarNode>());
+                                         std::make_shared<ScalarNode>());
     EXPECT_THROW(map->get_element_node(), std::logic_error);
 }
 
@@ -316,9 +316,9 @@ TEST_F(SchemaNodeTest, DeepNesting5Levels) {
     root->add_children("data", "data_file", level2);
 
     // Navigate: root -> data -> element(map) -> value(struct) -> val(scalar)
-    auto data_node = root->get_children_node("data");       // ArrayNode
-    auto map_node = data_node->get_element_node();           // MapNode
-    auto struct_node = map_node->get_value_node();           // StructNode (level4)
+    auto data_node = root->get_children_node("data"); // ArrayNode
+    auto map_node = data_node->get_element_node();    // MapNode
+    auto struct_node = map_node->get_value_node();    // StructNode (level4)
     EXPECT_TRUE(struct_node->children_column_exists("val"));
     EXPECT_EQ(struct_node->children_file_column_name("val"), "val_file");
 }

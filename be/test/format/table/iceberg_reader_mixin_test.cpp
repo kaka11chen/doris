@@ -15,23 +15,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <gen_cpp/PlanNodes_types.h>
 #include <gtest/gtest.h>
 
 #include <memory>
-#include <set>
+#include <queue>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "core/block/block.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
 #include "core/column/column_struct.h"
+#include "core/column/column_vector.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_struct.h"
 #include "format/table/iceberg_reader.h"
+#include "runtime/runtime_profile.h"
 #include "storage/olap_common.h"
 
 namespace doris {
@@ -355,147 +359,394 @@ TEST(IcebergSortDeleteTest, SingleElementArrays) {
     EXPECT_EQ(result[1], 100);
 }
 
-// ============================================================================
-// Block expand/shrink logic tests
-// These replicate IcebergReaderMixin::_expand_block_if_need and
-// _shrink_block_if_need without needing a real reader.
-// ============================================================================
-class IcebergBlockExpandShrinkTest : public ::testing::Test {
-protected:
-    // Replicate expand logic: add columns to a block, update name→idx map
-    static Status expand_block(Block* block,
-                               const std::vector<ColumnWithTypeAndName>& expand_columns,
-                               std::unordered_map<std::string, uint32_t>* col_name_to_block_idx) {
-        std::set<std::string> names;
-        auto block_names = block->get_names();
-        names.insert(block_names.begin(), block_names.end());
-        for (auto col : expand_columns) {
-            col.column->assume_mutable()->clear();
-            if (names.contains(col.name)) {
-                return Status::InternalError("Wrong expand column '{}'", col.name);
-            }
-            names.insert(col.name);
-            (*col_name_to_block_idx)[col.name] = static_cast<uint32_t>(block->columns());
-            block->insert(col);
-        }
+class FakeEqualityDeleteOrcReader : public OrcReader {
+public:
+    FakeEqualityDeleteOrcReader(std::vector<std::string> schema_names,
+                                std::vector<DataTypePtr> schema_types, std::vector<Block> batches)
+            : OrcReader(TFileScanRangeParams {}, TFileRangeDesc {}, "UTC", nullptr, nullptr, false),
+              _schema_names(std::move(schema_names)),
+              _schema_types(std::move(schema_types)),
+              _batches(std::move(batches)) {}
+
+    Status init_schema_reader() override { return Status::OK(); }
+
+    Status get_parsed_schema(std::vector<std::string>* col_names,
+                             std::vector<DataTypePtr>* col_types) override {
+        *col_names = _schema_names;
+        *col_types = _schema_types;
         return Status::OK();
     }
 
-    // Replicate shrink logic: remove columns from a block, update name→idx map
-    static Status shrink_block(Block* block, const std::vector<std::string>& expand_col_names,
-                               std::unordered_map<std::string, uint32_t>* col_name_to_block_idx) {
-        std::set<size_t> positions_to_erase;
-        for (const std::string& expand_col : expand_col_names) {
-            if (!col_name_to_block_idx->contains(expand_col)) {
-                return Status::InternalError("Wrong erase column '{}'", expand_col);
-            }
-            positions_to_erase.emplace((*col_name_to_block_idx)[expand_col]);
+protected:
+    Status _open_file_reader(ReaderInitContext* /*ctx*/) override { return Status::OK(); }
+
+    Status _do_init_reader(ReaderInitContext* /*ctx*/) override { return Status::OK(); }
+
+    Status _do_get_next_block(Block* block, size_t* read_rows, bool* eof) override {
+        if (_next_batch >= _batches.size()) {
+            *read_rows = 0;
+            *eof = true;
+            return Status::OK();
         }
-        block->erase(positions_to_erase);
-        for (const std::string& expand_col : expand_col_names) {
-            col_name_to_block_idx->erase(expand_col);
-        }
+
+        MutableBlock mutable_block(block);
+        RETURN_IF_ERROR(mutable_block.merge(_batches[_next_batch]));
+        *block = mutable_block.to_block();
+        *read_rows = block->rows();
+        ++_next_batch;
+        *eof = _next_batch >= _batches.size();
+        return Status::OK();
+    }
+
+private:
+    std::vector<std::string> _schema_names;
+    std::vector<DataTypePtr> _schema_types;
+    std::vector<Block> _batches;
+    size_t _next_batch = 0;
+};
+
+class IcebergReaderMixinOrcTestAccessor : public IcebergReaderMixin<OrcReader> {
+public:
+    IcebergReaderMixinOrcTestAccessor(RuntimeProfile* profile, const TFileScanRangeParams& params,
+                                      const TFileRangeDesc& range)
+            : IcebergReaderMixin<OrcReader>(nullptr, profile, nullptr, params, range, 1024, "UTC",
+                                            nullptr, nullptr, false) {}
+
+    using IcebergReaderMixin<OrcReader>::_init_row_filters;
+    using IcebergReaderMixin<OrcReader>::_equality_delete_base;
+    using IcebergReaderMixin<OrcReader>::on_after_read_block;
+    using IcebergReaderMixin<OrcReader>::on_before_read_block;
+
+    void set_delete_rows() override {}
+
+    void set_block_index_map(std::unordered_map<std::string, uint32_t>* col_name_to_idx) {
+        this->col_name_to_block_idx_ref() = col_name_to_idx;
+    }
+
+    const std::vector<std::string>& expand_col_names() const { return _expand_col_names; }
+
+    const std::unordered_map<int, std::string>& id_to_block_column_name() const {
+        return _id_to_block_column_name;
+    }
+
+    size_t equality_delete_impl_count() const { return _equality_delete_impls.size(); }
+
+    void enqueue_delete_reader(std::unique_ptr<GenericReader> delete_reader) {
+        _delete_readers.push(std::move(delete_reader));
+    }
+
+protected:
+    Status on_before_init_reader(ReaderInitContext* /*ctx*/) override { return Status::OK(); }
+
+private:
+    using DeleteFile = typename IcebergReaderMixin<OrcReader>::DeleteFile;
+
+    Status _read_position_delete_file(const TFileRangeDesc*, DeleteFile*) override {
+        return Status::OK();
+    }
+
+    std::unique_ptr<GenericReader> _create_equality_reader(
+            const TFileRangeDesc& /*delete_desc*/) override {
+        EXPECT_FALSE(_delete_readers.empty());
+        auto delete_reader = std::move(_delete_readers.front());
+        _delete_readers.pop();
+        return delete_reader;
+    }
+
+    std::queue<std::unique_ptr<GenericReader>> _delete_readers;
+};
+
+class UnsupportedDeleteReader : public GenericReader {
+public:
+    Status init_schema_reader() override { return Status::OK(); }
+
+protected:
+    Status _do_get_next_block(Block* /*block*/, size_t* read_rows, bool* eof) override {
+        *read_rows = 0;
+        *eof = true;
         return Status::OK();
     }
 };
 
-TEST_F(IcebergBlockExpandShrinkTest, ExpandAddsColumns) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}};
-
-    std::vector<ColumnWithTypeAndName> expand_cols = {
-            {ColumnString::create(), std::make_shared<DataTypeString>(), "eq_col1"},
-            {ColumnInt64::create(), std::make_shared<DataTypeInt64>(), "eq_col2"},
-    };
-
-    auto st = expand_block(&block, expand_cols, &idx_map);
-    ASSERT_TRUE(st.ok());
-    EXPECT_EQ(block.columns(), 3);
-    EXPECT_EQ(idx_map["eq_col1"], 1);
-    EXPECT_EQ(idx_map["eq_col2"], 2);
+static MutableColumnPtr make_nullable_string_column(const std::vector<std::string>& values) {
+    auto column = make_nullable(std::make_shared<DataTypeString>())->create_column();
+    for (const auto& value : values) {
+        column->insert_data(value.data(), value.size());
+    }
+    return column;
 }
 
-TEST_F(IcebergBlockExpandShrinkTest, ExpandDuplicateColumnError) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}};
-
-    std::vector<ColumnWithTypeAndName> expand_cols = {
-            {ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"},
-    };
-
-    auto st = expand_block(&block, expand_cols, &idx_map);
-    EXPECT_FALSE(st.ok());
-    EXPECT_NE(st.to_string().find("Wrong expand column"), std::string::npos);
+static MutableColumnPtr make_nullable_int32_column(const std::vector<Int32>& values) {
+    auto column = make_nullable(std::make_shared<DataTypeInt32>())->create_column();
+    for (const auto value : values) {
+        column->insert_data(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+    return column;
 }
 
-TEST_F(IcebergBlockExpandShrinkTest, ExpandNoColumns) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}};
+static std::vector<Int32> get_int32_values(const IColumn& column) {
+    const auto* int_column = check_and_get_column<ColumnInt32>(&column);
+    EXPECT_NE(int_column, nullptr);
+    if (int_column == nullptr) {
+        return {};
+    }
+    const auto& data = int_column->get_data();
+    return std::vector<Int32>(data.begin(), data.end());
+}
 
-    auto st = expand_block(&block, {}, &idx_map);
-    ASSERT_TRUE(st.ok());
+TEST(IcebergEqualityDeleteTest, ExpandFilterAndShrinkUsingRealHooks) {
+    RuntimeProfile profile("iceberg_equality_delete_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+
+    Block delete_batch;
+    delete_batch.insert({make_nullable_string_column({"us", "jp"}),
+                         make_nullable(std::make_shared<DataTypeString>()), "region"});
+    reader.enqueue_delete_reader(std::make_unique<FakeEqualityDeleteOrcReader>(
+            std::vector<std::string> {"region"},
+            std::vector<DataTypePtr> {std::make_shared<DataTypeString>()},
+            std::vector<Block> {delete_batch}));
+
+    TIcebergDeleteFileDesc delete_file;
+    delete_file.path = "memory://delete-region.orc";
+    delete_file.content = IcebergReaderMixinOrcTestAccessor::EQUALITY_DELETE;
+    delete_file.__set_field_ids({10});
+
+    auto st = reader._equality_delete_base({delete_file});
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    ASSERT_EQ(reader.expand_col_names(), std::vector<std::string>({"region"}));
+    ASSERT_EQ(reader.equality_delete_impl_count(), 1);
+    ASSERT_EQ(reader.id_to_block_column_name().at(10), "region");
+
+    Block block;
+    auto id_column = ColumnInt32::create();
+    for (Int32 value : {1, 2, 3}) {
+        id_column->insert_data(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+    block.insert({std::move(id_column), std::make_shared<DataTypeInt32>(), "id"});
+
+    auto block_idx = block.get_name_to_pos_map();
+    reader.set_block_index_map(&block_idx);
+
+    st = reader.on_before_read_block(&block);
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    ASSERT_EQ(block.columns(), 2);
+    ASSERT_EQ(block_idx["region"], 1);
+
+    block.replace_by_position(block_idx["region"], make_nullable_string_column({"cn", "us", "jp"}));
+
+    size_t read_rows = block.rows();
+    st = reader.on_after_read_block(&block, &read_rows);
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    EXPECT_EQ(read_rows, 1);
     EXPECT_EQ(block.columns(), 1);
+    EXPECT_FALSE(block_idx.contains("region"));
+    EXPECT_EQ(get_int32_values(*block.get_by_position(0).column), std::vector<Int32>({1}));
 }
 
-TEST_F(IcebergBlockExpandShrinkTest, ShrinkRemovesColumns) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    block.insert({ColumnString::create(), std::make_shared<DataTypeString>(), "eq_col1"});
-    block.insert({ColumnInt64::create(), std::make_shared<DataTypeInt64>(), "eq_col2"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}, {"eq_col1", 1}, {"eq_col2", 2}};
+TEST(IcebergEqualityDeleteTest, RejectDuplicateExpandedColumnNames) {
+    RuntimeProfile profile("iceberg_duplicate_expand_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
 
-    auto st = shrink_block(&block, {"eq_col1", "eq_col2"}, &idx_map);
-    ASSERT_TRUE(st.ok());
+    Block delete_batch;
+    delete_batch.insert({make_nullable_int32_column({7}),
+                         make_nullable(std::make_shared<DataTypeInt32>()), "id"});
+    reader.enqueue_delete_reader(std::make_unique<FakeEqualityDeleteOrcReader>(
+            std::vector<std::string> {"id"},
+            std::vector<DataTypePtr> {std::make_shared<DataTypeInt32>()},
+            std::vector<Block> {delete_batch}));
+
+    TIcebergDeleteFileDesc delete_file;
+    delete_file.path = "memory://delete-id.orc";
+    delete_file.content = IcebergReaderMixinOrcTestAccessor::EQUALITY_DELETE;
+    delete_file.__set_field_ids({1});
+
+    auto st = reader._equality_delete_base({delete_file});
+    ASSERT_TRUE(st.ok()) << st.to_string();
+
+    Block block;
+    auto id_column = ColumnInt32::create();
+    Int32 value = 7;
+    id_column->insert_data(reinterpret_cast<const char*>(&value), sizeof(value));
+    block.insert({std::move(id_column), std::make_shared<DataTypeInt32>(), "id"});
+
+    auto block_idx = block.get_name_to_pos_map();
+    reader.set_block_index_map(&block_idx);
+
+    st = reader.on_before_read_block(&block);
+    ASSERT_FALSE(st.ok());
+    EXPECT_NE(st.to_string().find("Wrong expand column 'id'"), std::string::npos);
+}
+
+TEST(IcebergEqualityDeleteTest, BuildCompositeEqualityDeleteAndFilterRows) {
+    RuntimeProfile profile("iceberg_composite_delete_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+
+    Block delete_batch;
+    delete_batch.insert({make_nullable_string_column({"us", "cn"}),
+                         make_nullable(std::make_shared<DataTypeString>()), "region"});
+    delete_batch.insert({make_nullable_int32_column({7, 9}),
+                         make_nullable(std::make_shared<DataTypeInt32>()), "bucket"});
+    reader.enqueue_delete_reader(std::make_unique<FakeEqualityDeleteOrcReader>(
+            std::vector<std::string> {"region", "bucket"},
+            std::vector<DataTypePtr> {std::make_shared<DataTypeString>(),
+                                      std::make_shared<DataTypeInt32>()},
+            std::vector<Block> {delete_batch}));
+
+    TIcebergDeleteFileDesc delete_file;
+    delete_file.path = "memory://delete-composite.orc";
+    delete_file.content = IcebergReaderMixinOrcTestAccessor::EQUALITY_DELETE;
+    delete_file.__set_field_ids({10, 20});
+
+    auto st = reader._equality_delete_base({delete_file});
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    ASSERT_EQ(reader.expand_col_names(), std::vector<std::string>({"region", "bucket"}));
+    ASSERT_EQ(reader.equality_delete_impl_count(), 1);
+    ASSERT_EQ(reader.id_to_block_column_name().at(10), "region");
+    ASSERT_EQ(reader.id_to_block_column_name().at(20), "bucket");
+
+    Block block;
+    auto id_column = ColumnInt32::create();
+    for (Int32 value : {1, 2, 3, 4}) {
+        id_column->insert_data(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+    block.insert({std::move(id_column), std::make_shared<DataTypeInt32>(), "id"});
+
+    auto block_idx = block.get_name_to_pos_map();
+    reader.set_block_index_map(&block_idx);
+
+    st = reader.on_before_read_block(&block);
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    ASSERT_EQ(block.columns(), 3);
+
+    block.replace_by_position(block_idx["region"],
+                              make_nullable_string_column({"us", "us", "cn", "jp"}));
+    block.replace_by_position(block_idx["bucket"], make_nullable_int32_column({7, 8, 9, 7}));
+
+    size_t read_rows = block.rows();
+    st = reader.on_after_read_block(&block, &read_rows);
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    EXPECT_EQ(read_rows, 2);
     EXPECT_EQ(block.columns(), 1);
-    EXPECT_EQ(block.get_by_position(0).name, "id");
-    EXPECT_FALSE(idx_map.contains("eq_col1"));
-    EXPECT_FALSE(idx_map.contains("eq_col2"));
-    EXPECT_TRUE(idx_map.contains("id"));
+    EXPECT_EQ(get_int32_values(*block.get_by_position(0).column), std::vector<Int32>({2, 4}));
 }
 
-TEST_F(IcebergBlockExpandShrinkTest, ShrinkColumnNotFoundError) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}};
+TEST(IcebergInitRowFiltersTest, CountShortCircuitSkipsDeleteProcessing) {
+    RuntimeProfile profile("iceberg_count_short_circuit_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    scan_range.__isset.table_format_params = true;
+    scan_range.table_format_params.__set_table_level_row_count(10);
+    scan_range.table_format_params.iceberg_params.__set_format_version(2);
 
-    auto st = shrink_block(&block, {"nonexistent"}, &idx_map);
-    EXPECT_FALSE(st.ok());
-    EXPECT_NE(st.to_string().find("Wrong erase column"), std::string::npos);
+    TIcebergDeleteFileDesc dv1;
+    dv1.path = "memory://dv-1.bin";
+    dv1.content = IcebergReaderMixinOrcTestAccessor::DELETION_VECTOR;
+    TIcebergDeleteFileDesc dv2;
+    dv2.path = "memory://dv-2.bin";
+    dv2.content = IcebergReaderMixinOrcTestAccessor::DELETION_VECTOR;
+    scan_range.table_format_params.iceberg_params.__set_delete_files({dv1, dv2});
+
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+    reader.set_push_down_agg_type(TPushAggOp::COUNT);
+
+    auto st = reader._init_row_filters();
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    EXPECT_EQ(reader.get_push_down_agg_type(), TPushAggOp::COUNT);
+    EXPECT_EQ(reader.equality_delete_impl_count(), 0);
 }
 
-TEST_F(IcebergBlockExpandShrinkTest, ExpandThenShrinkRoundTrip) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    block.insert({ColumnString::create(), std::make_shared<DataTypeString>(), "name"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}, {"name", 1}};
+TEST(IcebergInitRowFiltersTest, OldFormatSkipsDeleteProcessing) {
+    RuntimeProfile profile("iceberg_old_format_skip_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    scan_range.__isset.table_format_params = true;
+    scan_range.table_format_params.iceberg_params.__set_format_version(1);
 
-    // Expand with 2 equality delete columns
-    std::vector<ColumnWithTypeAndName> expand_cols = {
-            {ColumnInt64::create(), std::make_shared<DataTypeInt64>(), "del_col1"},
-            {ColumnInt64::create(), std::make_shared<DataTypeInt64>(), "del_col2"},
-    };
-    ASSERT_TRUE(expand_block(&block, expand_cols, &idx_map).ok());
-    EXPECT_EQ(block.columns(), 4);
+    TIcebergDeleteFileDesc dv1;
+    dv1.path = "memory://dv-1.bin";
+    dv1.content = IcebergReaderMixinOrcTestAccessor::DELETION_VECTOR;
+    TIcebergDeleteFileDesc dv2;
+    dv2.path = "memory://dv-2.bin";
+    dv2.content = IcebergReaderMixinOrcTestAccessor::DELETION_VECTOR;
+    scan_range.table_format_params.iceberg_params.__set_delete_files({dv1, dv2});
 
-    // Shrink back
-    ASSERT_TRUE(shrink_block(&block, {"del_col1", "del_col2"}, &idx_map).ok());
-    EXPECT_EQ(block.columns(), 2);
-    EXPECT_EQ(idx_map.size(), 2);
-    EXPECT_EQ(block.get_by_position(0).name, "id");
-    EXPECT_EQ(block.get_by_position(1).name, "name");
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+
+    auto st = reader._init_row_filters();
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    EXPECT_EQ(reader.get_push_down_agg_type(), TPushAggOp::NONE);
+    EXPECT_EQ(reader.equality_delete_impl_count(), 0);
 }
 
-TEST_F(IcebergBlockExpandShrinkTest, ShrinkNoColumns) {
-    Block block;
-    block.insert({ColumnInt32::create(), std::make_shared<DataTypeInt32>(), "id"});
-    std::unordered_map<std::string, uint32_t> idx_map = {{"id", 0}};
+TEST(IcebergInitRowFiltersTest, EqualityDeleteDisablesCountPushdown) {
+    RuntimeProfile profile("iceberg_eq_delete_count_disable_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    scan_range.__isset.table_format_params = true;
+    scan_range.table_format_params.iceberg_params.__set_format_version(2);
 
-    auto st = shrink_block(&block, {}, &idx_map);
-    ASSERT_TRUE(st.ok());
-    EXPECT_EQ(block.columns(), 1);
+    TIcebergDeleteFileDesc delete_file;
+    delete_file.path = "memory://delete-region.orc";
+    delete_file.content = IcebergReaderMixinOrcTestAccessor::EQUALITY_DELETE;
+    delete_file.__set_field_ids({10});
+    scan_range.table_format_params.iceberg_params.__set_delete_files({delete_file});
+
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+    reader.set_push_down_agg_type(TPushAggOp::COUNT);
+
+    Block delete_batch;
+    delete_batch.insert({make_nullable_string_column({"us"}),
+                         make_nullable(std::make_shared<DataTypeString>()), "region"});
+    reader.enqueue_delete_reader(std::make_unique<FakeEqualityDeleteOrcReader>(
+            std::vector<std::string> {"region"},
+            std::vector<DataTypePtr> {std::make_shared<DataTypeString>()},
+            std::vector<Block> {delete_batch}));
+
+    auto st = reader._init_row_filters();
+    ASSERT_TRUE(st.ok()) << st.to_string();
+    EXPECT_EQ(reader.get_push_down_agg_type(), TPushAggOp::NONE);
+    EXPECT_EQ(reader.equality_delete_impl_count(), 1);
+    ASSERT_EQ(reader.expand_col_names(), std::vector<std::string>({"region"}));
+}
+
+TEST(IcebergEqualityDeleteTest, RejectDeleteFileWithoutFieldIds) {
+    RuntimeProfile profile("iceberg_missing_field_ids_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+
+    TIcebergDeleteFileDesc delete_file;
+    delete_file.path = "memory://delete-missing-field-ids.orc";
+    delete_file.content = IcebergReaderMixinOrcTestAccessor::EQUALITY_DELETE;
+
+    auto st = reader._equality_delete_base({delete_file});
+    ASSERT_FALSE(st.ok());
+    EXPECT_TRUE(st.is<ErrorCode::INTERNAL_ERROR>());
+    EXPECT_NE(st.to_string().find("missing delete field ids"), std::string::npos);
+}
+
+TEST(IcebergEqualityDeleteTest, RejectUnsupportedDeleteReaderFormat) {
+    RuntimeProfile profile("iceberg_unsupported_delete_reader_test");
+    TFileScanRangeParams scan_params;
+    TFileRangeDesc scan_range;
+    IcebergReaderMixinOrcTestAccessor reader(&profile, scan_params, scan_range);
+    reader.enqueue_delete_reader(std::make_unique<UnsupportedDeleteReader>());
+
+    TIcebergDeleteFileDesc delete_file;
+    delete_file.path = "memory://unsupported-delete-reader";
+    delete_file.content = IcebergReaderMixinOrcTestAccessor::EQUALITY_DELETE;
+    delete_file.__set_field_ids({10});
+
+    auto st = reader._equality_delete_base({delete_file});
+    ASSERT_FALSE(st.ok());
+    EXPECT_TRUE(st.is<ErrorCode::INTERNAL_ERROR>());
+    EXPECT_NE(st.to_string().find("Unsupported format of delete file"), std::string::npos);
 }
 
 } // namespace doris

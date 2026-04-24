@@ -363,14 +363,99 @@ touch "${UT_TMP_DIR}/tmp_file"
 
 # prepare java jars
 LIB_DIR="${DORIS_TEST_BINARY_DIR}/lib/"
+JAVA_EXT_DIR="${LIB_DIR}/java_extensions"
 rm -rf "${LIB_DIR}"
 mkdir "${LIB_DIR}"
+mkdir "${JAVA_EXT_DIR}"
 if [[ -d "${DORIS_THIRDPARTY}/installed/lib/hadoop_hdfs/" ]]; then
     cp -r "${DORIS_THIRDPARTY}/installed/lib/hadoop_hdfs/" "${LIB_DIR}"
 fi
-if [[ -f "${DORIS_HOME}/output/be/lib/java-udf-jar-with-dependencies.jar" ]]; then
+if [[ -d "${DORIS_HOME}/output/be/lib/java_extensions/" ]]; then
+    cp -r "${DORIS_HOME}/output/be/lib/java_extensions/." "${JAVA_EXT_DIR}/"
+fi
+if [[ -f "${DORIS_HOME}/output/be/lib/java_extensions/java-udf/java-udf-jar-with-dependencies.jar" ]]; then
+    cp "${DORIS_HOME}/output/be/lib/java_extensions/java-udf/java-udf-jar-with-dependencies.jar" \
+        "${LIB_DIR}/"
+elif [[ -f "${DORIS_HOME}/output/be/lib/java-udf-jar-with-dependencies.jar" ]]; then
     cp "${DORIS_HOME}/output/be/lib/java-udf-jar-with-dependencies.jar" "${LIB_DIR}/"
 fi
+
+prepare_hudi_scanner_jar() {
+    local hudi_scanner_dir="${JAVA_EXT_DIR}/hadoop-hudi-scanner"
+    local hudi_scanner_jar="${hudi_scanner_dir}/hadoop-hudi-scanner-jar-with-dependencies.jar"
+    local hadoop_hdfs_dir="${LIB_DIR}/hadoop_hdfs"
+    local jar_tool="${JAVA_HOME}/bin/jar"
+
+    if [[ ! -f "${hudi_scanner_jar}" ]]; then
+        return
+    fi
+    if [[ ! -x "${jar_tool}" ]]; then
+        echo "Missing jar tool: ${jar_tool}"
+        exit 1
+    fi
+
+    mkdir -p "${hudi_scanner_dir}"
+    if [[ -d "${hadoop_hdfs_dir}" ]]; then
+        local dep_dir
+        for dep_dir in "${hadoop_hdfs_dir}/common" "${hadoop_hdfs_dir}/common/lib" \
+            "${hadoop_hdfs_dir}/hdfs" "${hadoop_hdfs_dir}/hdfs/lib"; do
+            if [[ ! -d "${dep_dir}" ]]; then
+                continue
+            fi
+            local dep_jar
+            for dep_jar in "${dep_dir}"/*.jar; do
+                if [[ -f "${dep_jar}" ]]; then
+                    cp "${dep_jar}" "${hudi_scanner_dir}/"
+                fi
+            done
+        done
+    fi
+
+    local staging_dir="${hudi_scanner_dir}/staging"
+    rm -rf "${staging_dir}"
+    mkdir -p "${staging_dir}"
+    (
+        cd "${staging_dir}" && "${jar_tool}" xf "${hudi_scanner_jar}"
+    )
+
+    local doris_pkg_dir="${staging_dir}/org/apache/doris"
+    if [[ -d "${doris_pkg_dir}" ]]; then
+        local pkg_entry
+        for pkg_entry in "${doris_pkg_dir}"/*; do
+            if [[ "${pkg_entry##*/}" == "hudi" ]]; then
+                continue
+            fi
+            rm -rf "${pkg_entry}"
+        done
+    fi
+
+    rm -f "${hudi_scanner_jar}"
+    "${jar_tool}" cf "${hudi_scanner_jar}" -C "${staging_dir}" .
+    rm -rf "${staging_dir}"
+}
+
+# add preload java libs first to match BE startup classpath ordering
+DORIS_PRELOAD_JAR=
+preload_jars=("preload-extensions")
+preload_jars+=("java-udf")
+for preload_jar_dir in "${preload_jars[@]}"; do
+    if [[ ! -d "${JAVA_EXT_DIR}/${preload_jar_dir}" ]]; then
+        continue
+    fi
+    for f in "${JAVA_EXT_DIR}/${preload_jar_dir}"/*.jar; do
+        if [[ ! -f "${f}" ]]; then
+            continue
+        fi
+        if [[ "${f}" == *"preload-extensions-project.jar" ]]; then
+            DORIS_PRELOAD_JAR="${f}"
+            continue
+        elif [[ -z "${DORIS_CLASSPATH}" ]]; then
+            export DORIS_CLASSPATH="${f}"
+        else
+            export DORIS_CLASSPATH="${DORIS_CLASSPATH}:${f}"
+        fi
+    done
+done
 
 # add java libs
 for f in "${LIB_DIR}"/*.jar; do
@@ -397,11 +482,17 @@ if [[ -d "${LIB_DIR}/hadoop_hdfs/" ]]; then
     done
 fi
 
+if [[ -n "${DORIS_PRELOAD_JAR}" ]]; then
+    DORIS_CLASSPATH="${DORIS_PRELOAD_JAR}:${DORIS_CLASSPATH}"
+fi
+
 # the CLASSPATH and LIBHDFS_OPTS is used for hadoop libhdfs
 # and conf/ dir so that hadoop libhdfs can read .xml config file in conf/
 export CLASSPATH="${DORIS_CLASSPATH}"
 # DORIS_CLASSPATH is for self-managed jni
 export DORIS_CLASSPATH="-Djava.class.path=${DORIS_CLASSPATH}"
+
+prepare_hudi_scanner_jar
 
 jdk_version() {
     local java_cmd="${1}"
